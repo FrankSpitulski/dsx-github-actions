@@ -175,7 +175,8 @@ copying the example's `main` policy for a tag-based release.
 | `dockerfile` | Path to Dockerfile | No | `Dockerfile` |
 | `platforms` | Target platforms | No | `linux/amd64,linux/arm64` |
 | `push` | Whether to push | No | `false` |
-| `load` | Load a single-platform image into Docker for local tests; cannot be combined with scanning or attestation preparation | No | `false` |
+| `separate-push` | Export to OCI before registry login, then publish the same digest | No | `false` |
+| `load` | Load a single-platform image into Docker for local tests; cannot be combined with scanning, attestation preparation, or separate push | No | `false` |
 | `registry` | Registry host for login (`nvcr.io`, `ghcr.io`). Empty means Docker Hub. | No | `""` |
 | `username` | Registry username (used when `push: "true"`) | No | `""` |
 | `password` | Registry password/token (used when `push: "true"`) | No | `""` |
@@ -203,10 +204,26 @@ copying the example's `main` policy for a tag-based release.
 
 ## Notes
 
+- With `separate-push: "true"`, the action builds all platforms to OCI before logging in with the supplied push credentials, then publishes with Skopeo. Existing Docker credentials remain available during the build. For anonymous base pulls, run `docker logout nvcr.io` before the action when publishing to NGC.
+
+  ```yaml
+  - run: docker logout nvcr.io
+  - uses: ./.github/actions/docker-build
+    with:
+      image: nvcr.io/example/team/service
+      tags: 1.2.3-rc.1
+      platforms: linux/amd64,linux/arm64
+      push: "true"
+      separate-push: "true"
+      registry: nvcr.io
+      username: $oauthtoken
+      password: ${{ secrets.NGC_PUSH_KEY }}
+  ```
+
 - If `push: "true"` but `username/password` are not provided, this action assumes you have already logged in earlier in the job.
 - Scanned publication resolves Docker `credHelpers` / `credsStore` on the host (or reads inline credentials). Only the destination registry's credentials are passed to Skopeo through a temporary `0600` authfile, which is removed on exit; host credential helpers must be available in `PATH`.
 - When `security-scan-enabled: "true"`, Buildx exports all requested platforms once to `$RUNNER_TEMP/docker-build-scan.XXXXXX/candidate` (an OCI layout, not the Docker daemon or a registry). Allow enough runner disk space for all platforms and scanner extraction.
 - `scripts/sbom-oci.sh` catalogs each platform with Syft; the separate `scripts/scan-oci.sh` scans those SBOMs with Grype only when scanning is enabled. These tools inspect files; they do not execute the target image. Reports and SPDX SBOMs for each platform are uploaded as a workflow artifact, including on scan failure.
-- The separate **Publish OCI artifact** step runs only after any enabled scanning succeeds and `push: "true"`. Skopeo copies the original index, images, and attestations with `--all --preserve-digests`; there is no second build. It targets only a candidate when `prepare-attestation` is enabled, otherwise the requested tags. Disabling both scanning and attestation preparation retains the existing direct Buildx push path.
+- The separate **Publish OCI artifact** step runs only after any enabled scanning succeeds and `push: "true"`. Skopeo copies the original index, images, and attestations with `--all --preserve-digests`; there is no second build. It targets only a candidate when `prepare-attestation` is enabled, otherwise the requested tags. Disabling scanning, attestation preparation, and separate push retains the existing direct Buildx push path.
 - Setting `security-scan-fail-on-critical: "false"` permits Critical findings, but scanner errors, missing platforms, and digest mismatches still fail the action and prevent publication.
 - The scan path requires a Linux runner with Bash, jq, and Docker. Syft, Grype, and Skopeo run in digest-pinned containers configured in `action.yml`; no Python or host installation of these tools is needed. The bundled script is resolved through `$GITHUB_ACTION_PATH`, so callers do not need it in their own checkout.

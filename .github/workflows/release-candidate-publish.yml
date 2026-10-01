@@ -285,6 +285,10 @@ jobs:
             3) echo "exists=false" >> "$GITHUB_OUTPUT" ;;
             *) exit "$status" ;;
           esac
+      # NGC rejects public base pulls when the push key lacks base-image scope.
+      - name: Remove NGC credentials before building
+        if: steps.existing.outputs.exists != 'true'
+        run: docker logout nvcr.io
       - name: Build and publish the missing image
         if: steps.existing.outputs.exists != 'true'
         uses: ./dsx-release-tools/.github/actions/docker-build
@@ -301,6 +305,7 @@ jobs:
           registry: nvcr.io
           username: $oauthtoken
           password: ${{ secrets.NGC_DSX_COMPONENTS_PUSH_KEY }}
+          separate-push: "true"
           cache-scope: rc-${{ matrix.name }}
           labels: |
             org.opencontainers.image.created=${{ steps.metadata.outputs.created }}
