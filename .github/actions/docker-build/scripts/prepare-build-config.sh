@@ -14,7 +14,9 @@ config="$(mktemp -d "${RUNNER_TEMP}/docker-anonymous.XXXXXX")"
 # Record cleanup ownership before any preparation that can fail.
 echo "config=$config" >> "$GITHUB_OUTPUT"
 if [[ -f "$original/config.json" ]]; then
-  jq '{auths: {}} + (if has("currentContext") then {currentContext} else {} end)' \
+  jq '{auths: {}} +
+    (if has("currentContext") then {currentContext} else {} end) +
+    (if has("proxies") then {proxies} else {} end)' \
     "$original/config.json" > "$config/config.json"
 else
   echo '{"auths":{}}' > "$config/config.json"

@@ -204,7 +204,7 @@ copying the example's `main` policy for a tag-based release.
 
 ## Notes
 
-- With `anonymous-build: "true"`, BuildKit uses an isolated Docker configuration without registry credentials or credential helpers. Existing registry logins remain available for publication and are excluded from the build. When pushing, the action builds all platforms to OCI, then logs in with the supplied push credentials and publishes with Skopeo. With `push: "false"`, anonymous builds can use `load: "true"` for single-platform local tests.
+- With `anonymous-build: "true"`, BuildKit uses an isolated Docker configuration without registry credentials or credential helpers. Docker proxy settings remain available as build arguments. Existing registry logins remain available for publication and are excluded from the build. When pushing, the action builds all platforms to OCI, then logs in with the supplied push credentials and publishes with Skopeo. With `push: "false"`, anonymous builds can use `load: "true"` for single-platform local tests.
 
   ```yaml
   - uses: ./.github/actions/docker-build

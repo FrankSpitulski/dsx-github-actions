@@ -17,6 +17,12 @@ if [[ -f "$original/config.json" ]]; then
 else
   echo '{"auths":{"nvcr.io":{"auth":"aW52YWxpZDppbnZhbGlk"}},"credsStore":"must-not-be-used","credHelpers":{"nvcr.io":"must-not-be-used"}}' > "$test_dir/inherited/config.json"
 fi
+jq '.proxies = {default: {
+  httpProxy: "http://proxy.example:3128",
+  httpsProxy: "http://proxy.example:3129",
+  noProxy: "localhost,Exact.example"
+}}' "$test_dir/inherited/config.json" > "$test_dir/proxy-config.json"
+mv "$test_dir/proxy-config.json" "$test_dir/inherited/config.json"
 for directory in contexts buildx cli-plugins; do
   if [[ -d "$original/$directory" ]]; then
     ln -s "$(cd "$original/$directory" && pwd)" "$test_dir/inherited/$directory"
@@ -28,7 +34,7 @@ export GITHUB_OUTPUT="$test_dir/output"
 ANONYMOUS_BUILD=true bash "$root/scripts/prepare-build-config.sh"
 build_config="$(sed -n 's/^config=//p' "$GITHUB_OUTPUT")"
 # Exercise BuildKit against the real public base with inherited credentials present.
-DOCKER_CONFIG="$build_config" docker buildx build --pull \
+DOCKER_CONFIG="$build_config" docker buildx build --pull --no-cache \
   --platform linux/amd64,linux/arm64 \
   --output "type=oci,dest=$test_dir/image,tar=false" \
   --metadata-file "$test_dir/metadata.json" "$root/tests"
