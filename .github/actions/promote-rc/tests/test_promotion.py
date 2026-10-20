@@ -83,6 +83,21 @@ def archive(files=None):
     return packed(files or default)
 
 
+def duplicate_file(data, path, content=None, mode=None):
+    output = io.BytesIO()
+    with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as source:
+        with tarfile.open(fileobj=output, mode="w:gz") as target:
+            for member in source:
+                target.addfile(member, source.extractfile(member) if member.isfile() else None)
+            duplicate = copy.deepcopy(source.getmember(path))
+            payload = source.extractfile(duplicate).read() if content is None else content
+            duplicate.size = len(payload)
+            if mode is not None:
+                duplicate.mode = mode
+            target.addfile(duplicate, io.BytesIO(payload))
+    return output.getvalue()
+
+
 def evidence(data):
     return {
         "schema": 1, "repository": "example/product", "rc_version": RC, "commit": COMMIT,
@@ -214,6 +229,12 @@ class PolicyTests(unittest.TestCase):
             with self.subTest(value=value), self.assertRaises(p.PromotionError):
                 p.value_paths(value)
 
+    def test_deployment_values_are_not_part_of_the_promotion_policy(self):
+        candidate = config()
+        candidate["charts"][0]["render_values"] = {}
+        with self.assertRaises(p.PromotionError):
+            p.policy(candidate)
+
     def test_incomplete_manifest(self):
         data = archive()
         original = evidence(data)
@@ -298,29 +319,29 @@ class ChartTests(unittest.TestCase):
             with self.subTest(paths=paths), self.assertRaises(charts.InvalidChart):
                 charts.promote(archive(), "service", RC, "1.2.3", COMMIT, paths, IMAGE, DESTINATIONS)
 
-    def test_app_version_reference_is_checked_without_explicit_version_paths(self):
+    def test_deployment_inputs_and_app_version_templates_are_preserved_without_rendering(self):
         files = {name: content for name, (content, _) in charts.unpack(archive(), "service").items()}
+        files["service/templates/required.yaml"] = b'{{ required "deployment input required" .Values.endpoint }}'
         files["service/templates/pod.yaml"] = files["service/templates/pod.yaml"].replace(
             b".Values.image.tag", b".Chart.AppVersion",
         )
+        values = charts.yaml_object(files["service/values.yaml"])
+        values["image"]["repository"] = "registry.example.com/service"
+        files["service/values.yaml"] = charts.encoded(values)
         source = packed(files)
-        promoted = charts.promote(source, "service", RC, "1.2.3", COMMIT, [], IMAGE, DESTINATIONS)
-        self.assertIn(next(iter(DESTINATIONS)), charts.rendered_images(promoted).values())
-        with self.assertRaisesRegex(charts.InvalidChart, "not a verified promotion destination"):
-            charts.promote(source, "service", RC, "1.2.3", COMMIT, [], IMAGE, set())
+        run = subprocess.run
 
-    def test_new_image_references_are_checked(self):
-        files = {name: content for name, (content, _) in charts.unpack(archive(), "service").items()}
-        files["service/templates/new.yaml"] = (
-            b'{{ if eq .Chart.AppVersion "1.2.3" }}\n'
-            b"apiVersion: v1\nkind: Pod\nmetadata:\n  name: new\nspec:\n"
-            b"  initContainers:\n    - name: init\n"
-            b"      image: nvcr.io/example/components-dev/not-promoted:1.2.3\n"
-            b"{{ end }}\n"
-        )
-        with self.assertRaisesRegex(charts.InvalidChart, "not a verified promotion destination"):
-            charts.promote(packed(files), "service", RC, "1.2.3", COMMIT,
-                           [["image", "tag"]], IMAGE, DESTINATIONS)
+        def static_tools_only(args, **kwargs):
+            self.assertEqual(args[0], "yq")
+            return run(args, **kwargs)
+
+        with patch("subprocess.run", side_effect=static_tools_only):
+            promoted = charts.promote(source, "service", RC, "1.2.3", COMMIT,
+                                      [], IMAGE, DESTINATIONS)
+        after = charts.unpack(promoted, "service")
+        for name, content in files.items():
+            if name != "service/Chart.yaml":
+                self.assertEqual(after[name][0], content, name)
 
     def test_disabled_template_still_validates_each_declared_repository(self):
         files = {name: content for name, (content, _) in charts.unpack(archive(), "service").items()}
@@ -360,39 +381,61 @@ class ChartTests(unittest.TestCase):
                         charts.promote(packed(files), "service", RC, "1.2.3", COMMIT,
                                        [["image", "tag"]], IMAGE, DESTINATIONS)
 
-    def test_render_errors_and_duplicate_resources_are_rejected(self):
-        files = {name: content for name, (content, _) in charts.unpack(archive(), "service").items()}
-        files["service/templates/duplicate.yaml"] = files["service/templates/pod.yaml"]
-        with self.assertRaisesRegex(charts.InvalidChart, "identity is invalid or duplicated"):
-            charts.promote(packed(files), "service", RC, "1.2.3", COMMIT,
-                           [["image", "tag"]], IMAGE, DESTINATIONS)
-        files["service/templates/duplicate.yaml"] = b"{{ required \"missing value\" .Values.missing }}"
-        with self.assertRaisesRegex(charts.InvalidChart, "image-reference render failed"):
-            charts.promote(packed(files), "service", RC, "1.2.3", COMMIT,
-                           [["image", "tag"]], IMAGE, DESTINATIONS)
+    def test_identical_duplicate_files_canonicalize_and_keep_dependency_bytes(self):
+        original = archive()
+        source = duplicate_file(original, "service/templates/pod.yaml")
+        source = duplicate_file(source, "service/Chart.yaml")
+        before = charts.unpack(original, "service")
+        self.assertEqual(charts.unpack(source, "service"), before)
+        promoted = charts.promote(source, "service", RC, "1.2.3", COMMIT,
+                                  [["image", "tag"]], IMAGE, DESTINATIONS)
+        with tarfile.open(fileobj=io.BytesIO(promoted), mode="r:gz") as archive_:
+            paths = archive_.getnames()
+        self.assertEqual(len(paths), len(set(paths)))
+        after = charts.unpack(promoted, "service")
+        self.assertEqual(after["service/charts/child-1.2.3-rc.7.tgz"],
+                         before["service/charts/child-1.2.3-rc.7.tgz"])
+        metadata = charts.yaml_object(after["service/Chart.yaml"][0])
+        self.assertEqual(metadata["annotations"]["dsx.nvidia.com/source-chart-digest"],
+                         charts.digest(source))
+
+    def test_duplicate_content_and_exact_mode_conflicts_are_rejected(self):
+        for content, mode in [(b"different", None), (None, 0o600), (None, 0o4644)]:
+            with self.subTest(content=content, mode=mode):
+                source = duplicate_file(archive(), "service/Chart.yaml", content, mode)
+                with self.assertRaisesRegex(charts.InvalidChart, "conflicting duplicate"):
+                    charts.unpack(source, "service")
+
+    def test_duplicate_occurrences_count_against_entry_and_expanded_size_limits(self):
+        original = archive()
+        files = charts.unpack(original, "service")
+        source = duplicate_file(original, "service/Chart.yaml")
+        with patch.object(charts, "MAX_FILES", len(files)):
+            with self.assertRaisesRegex(charts.InvalidChart, "excessive chart archive entries"):
+                charts.unpack(source, "service")
+        limit = max(len(source), sum(len(content) for content, _ in files.values()))
+        with patch.object(charts, "MAX_ARCHIVE", limit):
+            with self.assertRaisesRegex(charts.InvalidChart, "expanded chart exceeds"):
+                charts.unpack(source, "service")
 
     def test_wrong_source_revision_or_version(self):
         for rc, commit in [(RC, "b" * 40), ("1.2.3-rc.8", COMMIT)]:
             with self.subTest(rc=rc), self.assertRaises(charts.InvalidChart):
                 charts.promote(archive(), "service", rc, "1.2.3", commit, [], IMAGE, DESTINATIONS)
 
-    def test_unsafe_paths_links_duplicates(self):
+    def test_unsafe_paths_and_links(self):
         for name in ["../Chart.yaml", "/service/Chart.yaml", "service/../Chart.yaml",
                      "service/./Chart.yaml", "other/Chart.yaml", "service\\Chart.yaml"]:
             with self.subTest(name=name), self.assertRaises(charts.InvalidChart):
                 charts.unpack(archive({name: b"bad"}), "service")
-        for mode in ["link", "duplicate"]:
-            data = io.BytesIO()
-            with tarfile.open(fileobj=data, mode="w:gz") as tar:
-                info = tarfile.TarInfo("service/Chart.yaml")
-                if mode == "link":
-                    info.type = tarfile.SYMTYPE
-                    info.linkname = "../../outside"
-                tar.addfile(info)
-                if mode == "duplicate":
-                    tar.addfile(info)
-            with self.subTest(mode=mode), self.assertRaises(charts.InvalidChart):
-                charts.unpack(data.getvalue(), "service")
+        data = io.BytesIO()
+        with tarfile.open(fileobj=data, mode="w:gz") as tar:
+            info = tarfile.TarInfo("service/Chart.yaml")
+            info.type = tarfile.SYMTYPE
+            info.linkname = "../../outside"
+            tar.addfile(info)
+        with self.assertRaises(charts.InvalidChart):
+            charts.unpack(data.getvalue(), "service")
 
 
 class PromotionTests(unittest.TestCase):
@@ -421,18 +464,17 @@ class PromotionTests(unittest.TestCase):
             p.promote(candidate, self.evidence, None, None, "23-1")
 
     def test_unpromoted_chart_repository_fails_before_any_write(self):
-        for app_version in (False, True):
-            with self.subTest(app_version=app_version):
+        for disabled in (False, True):
+            with self.subTest(disabled=disabled):
                 files = {name: content for name, (content, _) in charts.unpack(archive(), "service").items()}
                 values = charts.yaml_object(files["service/values.yaml"])
                 values["image"]["repository"] = "nvcr.io/example/components-dev/not-promoted"
                 files["service/values.yaml"] = charts.encoded(values)
                 candidate = config()
-                if app_version:
-                    files["service/templates/pod.yaml"] = files["service/templates/pod.yaml"].replace(
-                        b".Values.image.tag", b".Chart.AppVersion",
+                if disabled:
+                    files["service/templates/pod.yaml"] = (
+                        b"{{ if false }}\n" + files["service/templates/pod.yaml"] + b"{{ end }}\n"
                     )
-                    candidate["charts"][0]["version_value_paths"] = []
                 source = packed(files)
                 proof = evidence(source)
                 proof["charts"][0]["version_value_paths"] = candidate["charts"][0]["version_value_paths"]
@@ -442,6 +484,15 @@ class PromotionTests(unittest.TestCase):
                     p.promote(candidate, proof, github, registry, "23-1")
                 self.assertEqual(registry.writes, [])
                 self.assertIsNone(github.reservation)
+
+    def test_original_compressed_digest_is_verified_before_duplicate_normalization(self):
+        self.registry.source_chart = duplicate_file(self.data, "service/Chart.yaml")
+        with patch.object(charts, "unpack") as unpack:
+            with self.assertRaisesRegex(p.PromotionError, "RC chart changed after verification"):
+                self.promote()
+            unpack.assert_not_called()
+        self.assertEqual(self.registry.writes, [])
+        self.assertIsNone(self.github.reservation)
 
     def test_partial_failure_retains_intent_and_resumes(self):
         self.registry.fail_chart = True

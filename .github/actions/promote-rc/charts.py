@@ -8,14 +8,12 @@ import gzip
 import hashlib
 import io
 import json
-from pathlib import Path, PurePosixPath
+from pathlib import PurePosixPath
 import subprocess
 import tarfile
-import tempfile
 
 MAX_ARCHIVE = 128 * 1024 * 1024
 MAX_FILES = 4096
-MAX_RENDER = 8 * 1024 * 1024
 
 
 class InvalidChart(ValueError):
@@ -26,7 +24,7 @@ def digest(data):
     return "sha256:" + hashlib.sha256(data).hexdigest()
 
 
-def yaml_documents(data):
+def yaml_object(data):
     result = subprocess.run(
         ["yq", "eval-all", "-o=json", "[.]",
          "-"], input=data, capture_output=True, check=False, timeout=30,
@@ -37,14 +35,7 @@ def yaml_documents(data):
         docs = json.loads(result.stdout)
     except (ValueError, UnicodeError):
         raise InvalidChart("invalid chart YAML") from None
-    if not isinstance(docs, list):
-        raise InvalidChart("invalid chart YAML")
-    return docs
-
-
-def yaml_object(data):
-    docs = yaml_documents(data)
-    if len(docs) != 1 or not isinstance(docs[0], dict):
+    if not isinstance(docs, list) or len(docs) != 1 or not isinstance(docs[0], dict):
         raise InvalidChart("chart YAML must contain one mapping")
     return docs[0]
 
@@ -58,10 +49,15 @@ def unpack(data, name):
     if len(data) > MAX_ARCHIVE:
         raise InvalidChart("chart archive exceeds the size limit")
     files = {}
+    modes = {}
     total = 0
+    entries = 0
     try:
         with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as archive:
             for member in archive:
+                entries += 1
+                if entries > MAX_FILES:
+                    raise InvalidChart("excessive chart archive entries")
                 parts = PurePosixPath(member.name).parts
                 if (not parts or parts[0] != name or
                         any(part in {".", ".."} for part in member.name.split("/")) or
@@ -70,12 +66,16 @@ def unpack(data, name):
                     raise InvalidChart("unsafe chart archive member")
                 if member.isdir():
                     continue
-                if member.name in files or len(files) >= MAX_FILES:
-                    raise InvalidChart("duplicate or excessive chart files")
                 total += member.size
                 if total > MAX_ARCHIVE or member.size < 0:
                     raise InvalidChart("expanded chart exceeds the size limit")
-                files[member.name] = (archive.extractfile(member).read(), member.mode & 0o777)
+                content = archive.extractfile(member).read()
+                if member.name in files:
+                    if files[member.name][0] != content or modes[member.name] != member.mode:
+                        raise InvalidChart("conflicting duplicate chart file")
+                    continue
+                modes[member.name] = member.mode
+                files[member.name] = (content, member.mode & 0o777)
     except (tarfile.TarError, EOFError, OSError):
         raise InvalidChart("invalid chart archive") from None
     if f"{name}/Chart.yaml" not in files:
@@ -92,53 +92,6 @@ def validate(data, name, version, commit):
             metadata["annotations"].get("dsx.nvidia.com/source-revision") != commit):
         raise InvalidChart("chart metadata does not match the RC and commit")
     return files, metadata
-
-
-def rendered_images(data):
-    with tempfile.TemporaryDirectory() as directory:
-        path = Path(directory) / "chart.tgz"
-        path.write_bytes(data)
-        result = subprocess.run(
-            ["helm", "template", "rc-promotion", str(path), "--include-crds"],
-            capture_output=True, check=False, timeout=30,
-        )
-    if result.returncode or result.stderr or len(result.stdout) > MAX_RENDER:
-        raise InvalidChart("chart image-reference render failed or exceeded the size limit")
-    documents = yaml_documents(result.stdout)
-    if len(documents) > 1024:
-        raise InvalidChart("too many rendered chart resources")
-    images = {}
-    resources = set()
-    visited = 0
-
-    def walk(value, location, depth=0):
-        nonlocal visited
-        visited += 1
-        if depth > 64 or visited > 100000:
-            raise InvalidChart("rendered chart exceeds structural limits")
-        if isinstance(value, dict):
-            for key, child in value.items():
-                child_location = (*location, key)
-                if key == "image" and isinstance(child, str):
-                    images[child_location] = child
-                walk(child, child_location, depth + 1)
-        elif isinstance(value, list):
-            for index, child in enumerate(value):
-                walk(child, (*location, index), depth + 1)
-
-    for document in documents:
-        if document is None:
-            continue
-        if not isinstance(document, dict) or not isinstance(document.get("metadata"), dict):
-            raise InvalidChart("rendered chart resource has no stable identity")
-        metadata = document["metadata"]
-        identity = (document.get("apiVersion"), document.get("kind"),
-                    metadata.get("namespace", "default"), metadata.get("name"))
-        if not all(isinstance(item, str) and item for item in identity) or identity in resources:
-            raise InvalidChart("rendered chart resource identity is invalid or duplicated")
-        resources.add(identity)
-        walk(document, identity)
-    return images
 
 
 def promote(data, name, rc, stable, commit, value_paths, manifest_digest, destination_images):
@@ -184,10 +137,4 @@ def promote(data, name, rc, stable, commit, value_paths, manifest_digest, destin
                 info.mode = mode
                 info.mtime = 0
                 archive.addfile(info, io.BytesIO(content))
-    promoted = output.getvalue()
-    before = rendered_images(data)
-    after = rendered_images(promoted)
-    for location, reference in after.items():
-        if before.get(location) != reference and reference not in destination_images:
-            raise InvalidChart("changed chart image is not a verified promotion destination")
-    return promoted
+    return output.getvalue()

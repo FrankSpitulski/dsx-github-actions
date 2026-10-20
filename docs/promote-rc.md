@@ -56,13 +56,14 @@ not dispatch inputs.
 ```
 
 Use the same chart version-value paths as the RC publisher's `versionValuePaths`.
-An empty array is valid when the chart uses `Chart.AppVersion`.
+An empty array means no values-file tag rewrites. References derived from
+`Chart.AppVersion` remain part of the product QA contract described below.
 Each declared path must end in `tag`, with a sibling string `repository` and an
 optional string `registry`. The resulting `registry/repository:stable` (or
 `repository:stable` when registry is empty) must exactly match a verified image
 destination, even for disabled templates or values embedded in strings.
 Missing repositories and other version-value mapping shapes are unsupported and
-rejected before rendering.
+rejected before any publishing.
 
 Set `source_publisher_sha` to the reviewed full commit SHA pinned by the product's
 RC caller. The selected Actions attempt must reference
@@ -163,6 +164,10 @@ paths in root `values.yaml` change. Templates, other values, lock files, and
 vendored dependencies retain their original bytes. A vendored RC dependency
 keeps its RC version and archive even when a separate stable chart is published
 for it. No dependency update or image rebuild occurs.
+After verifying the original source archive digest, identical duplicate file
+paths with exactly matching content and mode are canonicalized to one entry.
+Conflicting duplicate content or modes are rejected. This does not modify the
+contents of nested dependency archives.
 Vendored image references also retain their RC tags unless an explicitly
 declared root value overrides them. A stable root chart is **not** a promise that
 every runtime image uses a stable tag. Retain the referenced RC images and their
@@ -170,16 +175,16 @@ access permissions; this workflow performs no RC cleanup. Products requiring
 all-stable dependency references or namespace relocation are unsupported and
 must remain disabled until those transformations are implemented and reviewed.
 
-Before any writes, both archives are rendered with Helm's default client-side
-values and CRDs included. Every new or changed string `image` field, identified
-by resource identity and field path, must match an exact stable image destination
-already verified by the promotion plan. This covers explicit version paths and
-`Chart.AppVersion`-derived references. Missing/unpromoted image repositories,
-render errors, duplicate resource identities, and excessive render output stop
-promotion. Unchanged vendored RC references are retained. This bounded check does
-not certify values overrides, non-`image` custom-resource fields, or every
-conditional template branch; products needing those guarantees must remain
-disabled pending additional validation.
+The shared promoter validates source artifact identity, the planned inventory,
+and every declared tag rewrite. It does **not** render charts or require them to
+deploy with default values. Product QA owns deployment values, placeholder
+registry overrides, `Chart.AppVersion`-derived image references, conditional
+templates, embedded expressions, and custom resources. Product fixture/render
+checks must establish that the intended deployment uses the approved artifacts
+before activation. No runtime-wide image validation or deployment readiness is
+claimed. Repositories, templates, dependency archives, and undeclared values are
+preserved; the promoter never inserts deployment values or rewrites repositories
+to make a chart pass validation.
 
 The archive records the RC version, source commit, original chart digest, and RC
 manifest digest. This is traceability, not a new security approval or signing
