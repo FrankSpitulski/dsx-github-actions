@@ -101,6 +101,11 @@ on:
         required: false
         default: true
         type: boolean
+      security_scan_config:
+        description: "Path to a Grype config file in the caller checkout. Used when scanning is enabled."
+        required: false
+        default: ""
+        type: string
       prepare_attestation:
         description: "Generate SBOMs independently of scanning; push only a candidate for the separate attest-image workflow"
         required: false
@@ -181,4 +186,5 @@ jobs:
           sbom: ${{ inputs.sbom }}
           security-scan-enabled: ${{ inputs.security_scan_enabled && 'true' || 'false' }}
           security-scan-fail-on-critical: ${{ inputs.security_scan_fail_on_critical && 'true' || 'false' }}
+          security-scan-config: ${{ inputs.security_scan_config }}
           prepare-attestation: ${{ inputs.prepare_attestation && 'true' || 'false' }}

@@ -25,6 +25,14 @@ trap 'rm -rf "$tool_tmp"' EXIT
 container=(docker run --rm --user "$(id -u):$(id -g)"
   --cap-drop=ALL --security-opt=no-new-privileges
   --volume "$tool_tmp:/tmp" --env XDG_CACHE_HOME=/tmp/.cache)
+config_args=()
+if [[ -n "${SCAN_CONFIG:-}" ]]; then
+  [[ -f "$SCAN_CONFIG" && -r "$SCAN_CONFIG" ]] || fail 'Grype config must be a readable file'
+  # Snapshot caller policy once so every platform uses the same configuration.
+  cp -- "$SCAN_CONFIG" "$tool_tmp/grype.yaml"
+  container+=(--volume "$tool_tmp/grype.yaml:/grype.yaml:ro")
+  config_args=(--config /grype.yaml)
+fi
 blocked=false
 printf '\n### Container scan\n\nCandidate: %s\n\n' "$SCAN_DIGEST" >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
 while IFS=$'\t' read -r platform digest; do
@@ -37,7 +45,7 @@ while IFS=$'\t' read -r platform digest; do
   # Analyze the platform-specific SBOM; do not catalog a different image.
   rc=0
   "${container[@]}" --volume "$SCAN_REPORTS:/reports" --volume "$SCAN_CACHE:/cache" \
-    --env GRYPE_DB_CACHE_DIR=/cache "$GRYPE_IMAGE" "sbom:/reports/$key.syft.json" --fail-on critical \
+    --env GRYPE_DB_CACHE_DIR=/cache "$GRYPE_IMAGE" "sbom:/reports/$key.syft.json" "${config_args[@]}" --fail-on critical \
     -o "json=/reports/$key.grype.json" -o "sarif=/reports/$key.sarif" -o "table=/reports/$key.txt" || rc=$?
   # Grype uses exit 2 for policy findings; other failures always block push.
   case "$rc" in

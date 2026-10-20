@@ -101,6 +101,10 @@ inputs:
     description: "If true, fail the action when Critical vulnerabilities are found during security scan."
     required: false
     default: "true"
+  security-scan-config:
+    description: "Path to a Grype config file, relative to the caller working directory or absolute. Used when scanning is enabled."
+    required: false
+    default: ""
   prepare-attestation:
     description: "Generate per-platform SBOMs independently of scanning. With push=true, publish only a run-unique candidate for the attest-image workflow, not the requested release tags."
     required: false
@@ -248,6 +252,7 @@ runs:
         SCAN_DIGEST: ${{ steps.build.outputs.digest }}
         SCAN_REPORTS: ${{ steps.scan_vars.outputs.reports }}
         SCAN_FAIL_ON_CRITICAL: ${{ inputs.security-scan-fail-on-critical }}
+        SCAN_CONFIG: ${{ inputs.security-scan-config }}
         GRYPE_IMAGE: anchore/grype:v0.117.0@sha256:ddf9e9f204049f3a4a0955ef70873cabab6a31432125ad4f20a490b54950a253
       run: |
         bash "$GITHUB_ACTION_PATH/scripts/scan-oci.sh"
