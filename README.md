@@ -27,6 +27,7 @@ A collection of reusable GitHub Actions for standardizing CI/CD workflows across
 | Workflow                                                                 | Description                                           | Use Case                                |
 | ------------------------------------------------------------------------ | ----------------------------------------------------- | --------------------------------------- |
 | [promote-image](.github/workflows/promote-image.yml) | Re-tag and re-publish multi-arch images via `skopeo` | Promote OCI images across registries |
+| [promote-rc](.github/workflows/promote-rc.yml) | Opt-in environment-gated promotion of verified RC artifacts | Stable tags without rebuilding QA-tested images |
 | [docker-build](.github/workflows/docker-build.yml) | Reusable workflow wrapper for Docker build/push | Share Docker build logic across repos |
 | [attest-image](.github/workflows/attest-image.yml) | Sign and verify platform SBOMs and build provenance | Promote verified image digests to release tags |
 | [release-candidate-publish](.github/workflows/release-candidate-publish.yml) | Source RCs plus immutable NGC images and Helm charts | Manifest-driven RC publishing through one caller job |
@@ -170,6 +171,7 @@ This reusable workflow wraps `skopeo copy`, so it copies the entire manifest lis
 - [Shared Release Candidate Workflow](.github/workflows/README.md#release-candidate-release-candidateyml)
 - [Shared Release Candidate Helpers](.github/actions/release-candidate/README.md)
 - [Release Candidate Artifact Publishing](docs/release-candidate-publishing.md)
+- [Promote a Release Candidate](docs/promote-rc.md)
 
 ## 🎯 Features
 

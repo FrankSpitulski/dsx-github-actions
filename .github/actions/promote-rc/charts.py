@@ -1,0 +1,123 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+"""Deterministic release metadata changes to an already-built Helm archive."""
+
+import copy
+import gzip
+import hashlib
+import io
+import json
+from pathlib import PurePosixPath
+import subprocess
+import tarfile
+
+MAX_ARCHIVE = 128 * 1024 * 1024
+MAX_FILES = 4096
+
+
+class InvalidChart(ValueError):
+    """A chart cannot be promoted without changing unapproved content."""
+
+
+def digest(data):
+    return "sha256:" + hashlib.sha256(data).hexdigest()
+
+
+def yaml_object(data):
+    result = subprocess.run(
+        ["yq", "eval-all", "-o=json", "[.]",
+         "-"], input=data, capture_output=True, check=False, timeout=30,
+    )
+    if result.returncode:
+        raise InvalidChart("chart YAML could not be parsed")
+    try:
+        docs = json.loads(result.stdout)
+    except (ValueError, UnicodeError):
+        raise InvalidChart("invalid chart YAML") from None
+    if len(docs) != 1 or not isinstance(docs[0], dict):
+        raise InvalidChart("chart YAML must contain one mapping")
+    return docs[0]
+
+
+def encoded(value):
+    # JSON is a YAML subset and avoids serializer-dependent archive bytes.
+    return (json.dumps(value, sort_keys=True, indent=2) + "\n").encode()
+
+
+def unpack(data, name):
+    if len(data) > MAX_ARCHIVE:
+        raise InvalidChart("chart archive exceeds the size limit")
+    files = {}
+    total = 0
+    try:
+        with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as archive:
+            for member in archive:
+                parts = PurePosixPath(member.name).parts
+                if (not parts or parts[0] != name or
+                        any(part in {".", ".."} for part in member.name.split("/")) or
+                        member.name.startswith("/") or "\\" in member.name or
+                        len(parts) > 32 or not (member.isfile() or member.isdir())):
+                    raise InvalidChart("unsafe chart archive member")
+                if member.isdir():
+                    continue
+                if member.name in files or len(files) >= MAX_FILES:
+                    raise InvalidChart("duplicate or excessive chart files")
+                total += member.size
+                if total > MAX_ARCHIVE or member.size < 0:
+                    raise InvalidChart("expanded chart exceeds the size limit")
+                files[member.name] = (archive.extractfile(member).read(), member.mode & 0o777)
+    except (tarfile.TarError, EOFError, OSError):
+        raise InvalidChart("invalid chart archive") from None
+    if f"{name}/Chart.yaml" not in files:
+        raise InvalidChart("chart metadata is missing")
+    return files
+
+
+def validate(data, name, version, commit):
+    files = unpack(data, name)
+    metadata = yaml_object(files[f"{name}/Chart.yaml"][0])
+    if (metadata.get("name") != name or metadata.get("version") != version or
+            metadata.get("appVersion") != version or
+            not isinstance(metadata.get("annotations"), dict) or
+            metadata["annotations"].get("dsx.nvidia.com/source-revision") != commit):
+        raise InvalidChart("chart metadata does not match the RC and commit")
+    return files, metadata
+
+
+def promote(data, name, rc, stable, commit, value_paths, manifest_digest):
+    files, metadata = validate(data, name, rc, commit)
+    metadata = copy.deepcopy(metadata)
+    metadata["version"] = stable
+    metadata["appVersion"] = stable
+    metadata["annotations"].update({
+        "dsx.nvidia.com/promoted-from": rc,
+        "dsx.nvidia.com/source-chart-digest": digest(data),
+        "dsx.nvidia.com/rc-manifest-digest": manifest_digest,
+    })
+    files[f"{name}/Chart.yaml"] = (encoded(metadata), files[f"{name}/Chart.yaml"][1])
+    if value_paths:
+        entry = f"{name}/values.yaml"
+        if entry not in files:
+            raise InvalidChart("declared chart values are missing")
+        values = yaml_object(files[entry][0])
+        for keys in value_paths:
+            target = values
+            for key in keys[:-1]:
+                if not isinstance(target, dict) or key not in target:
+                    raise InvalidChart("declared chart value path is missing")
+                target = target[key]
+            if not isinstance(target, dict) or target.get(keys[-1]) != rc:
+                raise InvalidChart("declared chart value is not the selected RC")
+            target[keys[-1]] = stable
+        files[entry] = (encoded(values), files[entry][1])
+    output = io.BytesIO()
+    with gzip.GzipFile(fileobj=output, mode="wb", filename="", mtime=0) as compressed:
+        with tarfile.open(fileobj=compressed, mode="w", format=tarfile.USTAR_FORMAT) as archive:
+            for path, (content, mode) in sorted(files.items()):
+                info = tarfile.TarInfo(path)
+                info.size = len(content)
+                info.mode = mode
+                info.mtime = 0
+                archive.addfile(info, io.BytesIO(content))
+    return output.getvalue()

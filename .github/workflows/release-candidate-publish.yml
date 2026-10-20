@@ -34,6 +34,10 @@ on:
         description: Build images and lint/package charts without publishing on nonrelease events
         type: boolean
         default: false
+      promotion-manifest:
+        description: Record verified registry digests for later opt-in stable promotion
+        type: boolean
+        default: false
       environment:
         description: Protected GitHub environment for artifact credentials and deployment rules
         type: string
@@ -404,3 +408,53 @@ jobs:
           RELEASE_VERSION: ${{ needs.release.outputs.version }}
           EXPECTED_REVISION: ${{ github.sha }}
         run: bash dsx-release-tools/.github/actions/release-artifacts/verify-chart.sh
+
+  promotion-manifest:
+    needs: [plan, release, images, charts]
+    if: >-
+      always() && inputs.promotion-manifest &&
+      needs.release.outputs.should-publish == 'true' &&
+      (needs.images.result == 'success' || needs.plan.outputs.image-count == '0') &&
+      (needs.charts.result == 'success' || needs.plan.outputs.chart-count == '0')
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 20
+    environment: ${{ inputs.environment }}
+    steps:
+      - name: Select temporary registry credential paths
+        run: |
+          {
+            echo "PROMOTION_AUTH_ROOT=$RUNNER_TEMP/rc-manifest-auth"
+            echo "HELM_CONFIG_HOME=$RUNNER_TEMP/rc-manifest-helm/config"
+            echo "HELM_CACHE_HOME=$RUNNER_TEMP/rc-manifest-helm/cache"
+            echo "HELM_DATA_HOME=$RUNNER_TEMP/rc-manifest-helm/data"
+          } >> "$GITHUB_ENV"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: dsx-release-tools
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24"
+      - uses: dcarbone/install-yq-action@64b1b9eb28920bb1a4c13c05321df284f9a8f940 # v1.1.1
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Install Helm
+        run: bash dsx-release-tools/.github/actions/helm-shared/scripts/install-helm.sh
+      - name: Capture every verified RC artifact
+        env:
+          RC_PROMOTION_SOURCE_NGC_KEY: ${{ secrets.NGC_DSX_COMPONENTS_PUSH_KEY }}
+          RC_VERSION: ${{ needs.release.outputs.version }}
+          RC_IMAGES: ${{ needs.plan.outputs.images }}
+          RC_CHARTS: ${{ needs.plan.outputs.charts }}
+          RC_NGC_PATH: ${{ inputs.ngc-path }}
+        run: python3 dsx-release-tools/.github/actions/promote-rc/promotion.py capture
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: rc-promotion-manifest-${{ needs.release.outputs.version }}-${{ github.run_attempt }}
+          path: rc-promotion-manifest.json
+          if-no-files-found: error
+          retention-days: 90
+      - name: Remove local registry credentials
+        if: always()
+        run: rm -rf -- "$PROMOTION_AUTH_ROOT" "$HELM_CONFIG_HOME" "$HELM_CACHE_HOME" "$HELM_DATA_HOME"
