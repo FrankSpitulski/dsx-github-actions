@@ -64,6 +64,51 @@ class EvidenceTests(unittest.TestCase):
     def test_exact_successful_run_and_manifest(self):
         self.assertEqual(self.github.evidence(config(), RC), self.manifest)
 
+    def test_caller_path_forms_in_selection_and_exact_attempt(self):
+        caller = config()["source_workflow"]
+        paths = [caller, f"{caller}@release/1.2.3", f"{caller}@refs/heads/release/1.2.3",
+                 f"{caller}@{COMMIT}"]
+        listed = copy.deepcopy(self.run)
+        self.github.pages.side_effect = lambda path, key: (
+            [listed] if path.startswith("actions/workflows/") else [self.artifact]
+        )
+        for listed_path in paths:
+            for attempt_path in paths:
+                with self.subTest(listed_path=listed_path, attempt_path=attempt_path):
+                    listed["path"] = listed_path
+                    self.run["path"] = attempt_path
+                    self.assertEqual(self.github.evidence(config(), RC), self.manifest)
+
+    def test_wrong_caller_refs_rejected_in_selection_attempt_and_resume(self):
+        caller = config()["source_workflow"]
+        paths = [
+            f"{caller}@main", f"{caller}@release/1.2.4", f"{caller}@refs/heads/main",
+            f"{caller}@refs/tags/release/1.2.3", f"{caller}@{'b' * 40}",
+            f"{caller}@", f"{caller}@release/1.2.3@extra", None,
+            ".github/workflows/other.yml@release/1.2.3",
+        ]
+        for stage in ("selection", "attempt", "resume"):
+            for invalid in paths:
+                with self.subTest(stage=stage, path=invalid):
+                    self.setUp()
+                    listed = copy.deepcopy(self.run)
+                    self.github.pages.side_effect = lambda path, key: (
+                        [listed] if path.startswith("actions/workflows/") else [self.artifact]
+                    )
+                    if stage == "selection":
+                        listed["path"] = invalid
+                    else:
+                        self.run["path"] = invalid
+                    if stage == "resume":
+                        intent = {"rc_version": RC, "commit": COMMIT,
+                                  "source_run_id": 12, "source_run_attempt": 1}
+                        self.github.release.return_value = {
+                            "body": "Verified RC promotion intent.\n\n```json\n" +
+                                    p.canonical(intent).decode() + "```\n",
+                        }
+                    with self.assertRaises(p.PromotionError):
+                        self.github.evidence(config(), RC)
+
     def test_list_may_omit_provenance_but_exact_attempt_must_supply_it(self):
         listed = {key: value for key, value in self.run.items() if key != "referenced_workflows"}
         self.github.pages.side_effect = lambda path, key: (
@@ -143,9 +188,14 @@ class EvidenceTests(unittest.TestCase):
             "body": "Verified RC promotion intent.\n\n```json\n" +
                     p.canonical(intent).decode() + "```\n",
         }
-        self.assertEqual(self.github.evidence(config(), RC), self.manifest)
-        self.github.request.assert_any_call("repos/example/product/actions/runs/12/attempts/1")
-        self.assertEqual(self.github.pages.call_count, 1)
+        caller = config()["source_workflow"]
+        for suffix in ("", "@release/1.2.3", "@refs/heads/release/1.2.3", f"@{COMMIT}"):
+            with self.subTest(suffix=suffix):
+                self.run["path"] = caller + suffix
+                self.github.pages.reset_mock()
+                self.assertEqual(self.github.evidence(config(), RC), self.manifest)
+                self.github.request.assert_any_call("repos/example/product/actions/runs/12/attempts/1")
+                self.assertEqual(self.github.pages.call_count, 1)
 
     def test_missing_tag_or_nonprerelease_fails(self):
         self.github.tag.return_value = None

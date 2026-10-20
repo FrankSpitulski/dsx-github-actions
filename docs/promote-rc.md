@@ -72,6 +72,11 @@ at exactly that immutable SHA. Missing provenance, mutable refs, different
 repositories, and different publisher revisions are rejected. The helper fetches
 the exact attempt response rather than trusting run-list provenance fields.
 The shared repository does not embed its own commit SHA.
+GitHub's caller workflow `path` may be bare or have an `@ref` suffix. Selection,
+exact-attempt verification, and retries accept only the configured caller path
+with no suffix, the verified `release/X.Y.Z` branch (short or `refs/heads/`
+form), or the exact verified commit SHA. Other refs are rejected; this does not
+relax the separate immutable shared-publisher check.
 
 When charts are included, source and destination NGC paths **must be identical**.
 Cross-namespace chart promotion is rejected before registry access, including

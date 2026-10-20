@@ -256,12 +256,17 @@ class GitHub:
         require(release["tag_name"] == f"v{rc}" and release["draft"] is False and
                 release["prerelease"] is True, "RC must be a published GitHub prerelease")
         workflow = Path(config["source_workflow"]).name
+        branch = f"release/{version(rc)}"
 
         def successful(run):
+            if not isinstance(run.get("path"), str):
+                return False
+            caller_path, separator, caller_ref = run["path"].partition("@")
             return (run["head_sha"] == commit and
-                    run["head_branch"] == f"release/{version(rc)}" and
+                    run["head_branch"] == branch and
                     run["event"] == "push" and run["status"] == "completed" and
-                    run["conclusion"] == "success" and run["path"] == config["source_workflow"] and
+                    run["conclusion"] == "success" and caller_path == config["source_workflow"] and
+                    (not separator or caller_ref in {branch, f"refs/heads/{branch}", commit}) and
                     run["head_repository"]["full_name"] == self.repository)
 
         reserved = self.release(version(rc))
