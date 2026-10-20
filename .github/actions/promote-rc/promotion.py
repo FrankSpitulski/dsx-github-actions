@@ -19,6 +19,7 @@ import charts
 
 ENVIRONMENT = "stable-release"
 POLICY_PATH = ".github/rc-promotion.json"
+SOURCE_PUBLISHER = "dsx-ai-factory/dsx-github-actions/.github/workflows/release-candidate-publish.yml"
 SHA = r"[0-9a-f]{40}"
 DIGEST = r"sha256:[0-9a-f]{64}"
 NAME = r"[a-z0-9]+(?:[._-][a-z0-9]+)*"
@@ -74,13 +75,14 @@ def value_paths(value):
 
 def policy(value):
     require(isinstance(value, dict) and set(value) == {
-        "schema", "enabled", "source_workflow", "source_ngc_path",
+        "schema", "enabled", "source_workflow", "source_publisher_sha", "source_ngc_path",
         "destination_ngc_path", "images", "charts", "competing_workflows",
     }, "invalid promotion policy fields")
     require(type(value["schema"]) is int and value["schema"] == 1, "unsupported policy schema")
     require(value["enabled"] is True, "promotion policy is not enabled")
     require(matches(r"\.github/workflows/[A-Za-z0-9_-]+\.ya?ml", value["source_workflow"]),
             "invalid source workflow")
+    require(matches(SHA, value["source_publisher_sha"]), "source publisher must be an immutable SHA")
     for field in ("source_ngc_path", "destination_ngc_path"):
         require(matches(NGC_PATH, value[field]), "invalid NGC organization/team")
     require(isinstance(value["images"], list) and len(value["images"]) <= 32 and
@@ -254,6 +256,14 @@ class GitHub:
         require(release["tag_name"] == f"v{rc}" and release["draft"] is False and
                 release["prerelease"] is True, "RC must be a published GitHub prerelease")
         workflow = Path(config["source_workflow"]).name
+
+        def successful(run):
+            return (run["head_sha"] == commit and
+                    run["head_branch"] == f"release/{version(rc)}" and
+                    run["event"] == "push" and run["status"] == "completed" and
+                    run["conclusion"] == "success" and run["path"] == config["source_workflow"] and
+                    run["head_repository"]["full_name"] == self.repository)
+
         reserved = self.release(version(rc))
         if reserved:
             intent = self.intent(reserved)
@@ -261,22 +271,30 @@ class GitHub:
                     type(intent["source_run_id"]) is int and
                     type(intent["source_run_attempt"]) is int,
                     "stable release is reserved for another RC")
-            runs = [self.request(
-                f"{self.root}/actions/runs/{intent['source_run_id']}/attempts/"
-                f"{intent['source_run_attempt']}"
-            )]
+            selected = {"id": intent["source_run_id"], "run_attempt": intent["source_run_attempt"]}
         else:
             runs = self.pages(
                 f"actions/workflows/{workflow}/runs?head_sha={commit}&event=push&status=success",
                 "workflow_runs",
             )
-        runs = [run for run in runs if run["head_sha"] == commit and
-                run["head_branch"] == f"release/{version(rc)}" and
-                run["event"] == "push" and run["status"] == "completed" and
-                run["conclusion"] == "success" and run["path"] == config["source_workflow"] and
-                run["head_repository"]["full_name"] == self.repository]
-        require(runs, "no successful RC publishing run for this exact tag")
-        run = max(runs, key=lambda item: item["id"])
+            runs = [run for run in runs if successful(run)]
+            require(runs, "no successful RC publishing run for this exact tag")
+            selected = max(runs, key=lambda item: item["id"])
+        # Fetch exact-attempt detail even when the list response omits provenance.
+        run = self.request(f"{self.root}/actions/runs/{selected['id']}/attempts/"
+                           f"{selected['run_attempt']}")
+        require(run["id"] == selected["id"] and
+                run["run_attempt"] == selected["run_attempt"] and successful(run),
+                "selected RC attempt does not match the successful publishing run")
+        referenced = run.get("referenced_workflows")
+        require(isinstance(referenced, list), "RC attempt has no shared publisher provenance")
+        publishers = [item for item in referenced if isinstance(item, dict) and
+                      isinstance(item.get("path"), str) and
+                      item["path"].split("@", 1)[0] == SOURCE_PUBLISHER]
+        sha = config["source_publisher_sha"]
+        require(len(publishers) == 1 and publishers[0]["path"] == f"{SOURCE_PUBLISHER}@{sha}" and
+                publishers[0].get("sha") == sha and publishers[0].get("ref") in {None, sha},
+                "RC attempt did not use the approved immutable shared publisher")
         artifacts = self.pages(f"actions/runs/{run['id']}/artifacts", "artifacts")
         name = f"rc-promotion-manifest-{rc}-{run['run_attempt']}"
         artifacts = [item for item in artifacts if item["name"] == name and
@@ -476,7 +494,9 @@ def promote(config, evidence, github, registry, attempt, report_path=None):
         source = registry.chart(config["source_ngc_path"], item["name"], rc)
         require(charts.digest(source) == item["digest"], "RC chart changed after verification")
         transformed = charts.promote(source, item["name"], rc, stable, commit,
-                                     item["version_value_paths"], manifest_digest)
+                                     item["version_value_paths"], manifest_digest,
+                                     {f"nvcr.io/{config['destination_ngc_path']}/{image['name']}:{stable}"
+                                      for image in image_targets})
         prepared[item["name"]] = transformed
         registry.chart_destination(item["name"])
         existing = registry.chart(config["destination_ngc_path"], item["name"],
@@ -488,6 +508,7 @@ def promote(config, evidence, github, registry, attempt, report_path=None):
         "schema": 1, "repository": evidence["repository"], "rc_version": rc,
         "stable_version": stable, "commit": commit, "rc_manifest_digest": manifest_digest,
         "source_run_id": evidence["run_id"], "source_run_attempt": evidence["run_attempt"],
+        "source_publisher_sha": config["source_publisher_sha"],
         "source_ngc_path": config["source_ngc_path"],
         "destination_ngc_path": config["destination_ngc_path"],
         "images": image_targets, "charts": chart_targets,

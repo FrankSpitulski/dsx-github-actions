@@ -18,14 +18,17 @@ import charts
 import promotion as p
 
 COMMIT = "a" * 40
+PUBLISHER_SHA = "d" * 40
 IMAGE = "sha256:" + "b" * 64
 RC = "1.2.3-rc.7"
+DESTINATIONS = {"nvcr.io/example/components-dev/service:1.2.3"}
 
 
 def config():
     return {
         "schema": 1, "enabled": True,
         "source_workflow": ".github/workflows/release-rc.yml",
+        "source_publisher_sha": PUBLISHER_SHA,
         "source_ngc_path": "example/components-dev",
         "destination_ngc_path": "example/components-dev",
         "images": ["service"],
@@ -196,6 +199,8 @@ class PolicyTests(unittest.TestCase):
         for field, value in [("enabled", False), ("enabled", "true"), ("schema", True),
                              ("environment", "ungated"), ("source_ngc_path", "../escape"),
                              ("source_workflow", "../release.yml"),
+                             ("source_publisher_sha", "main"),
+                             ("source_publisher_sha", "v1.2.3"),
                              ("images", ["service", "service"]),
                              ("images", ["service;command"]), ("competing_workflows", ["../x"])]:
             with self.subTest(field=field):
@@ -241,10 +246,10 @@ class ChartTests(unittest.TestCase):
         source = archive()
         before = charts.unpack(source, "service")
         changed = charts.promote(source, "service", RC, "1.2.3", COMMIT,
-                                 [["image", "tag"]], IMAGE)
+                                 [["image", "tag"]], IMAGE, DESTINATIONS)
         self.assertNotEqual(charts.digest(source), charts.digest(changed))
         self.assertEqual(changed, charts.promote(source, "service", RC, "1.2.3", COMMIT,
-                                               [["image", "tag"]], IMAGE))
+                                               [["image", "tag"]], IMAGE, DESTINATIONS))
         after = charts.unpack(changed, "service")
         self.assertEqual(set(before), set(after))
         for path in before:
@@ -270,7 +275,7 @@ class ChartTests(unittest.TestCase):
 
     def test_render_retains_vendored_rc_image_and_root_repository(self):
         changed = charts.promote(archive(), "service", RC, "1.2.3", COMMIT,
-                                 [["image", "tag"]], IMAGE)
+                                 [["image", "tag"]], IMAGE, DESTINATIONS)
         after = charts.unpack(changed, "service")
         values = charts.yaml_object(after["service/values.yaml"][0])
         self.assertEqual(values["image"]["repository"], "nvcr.io/example/components-dev/service")
@@ -291,12 +296,85 @@ class ChartTests(unittest.TestCase):
     def test_missing_or_wrong_version_path(self):
         for paths in [[["missing"]], [["image", "repository"]], [["image", "tag", "child"]]]:
             with self.subTest(paths=paths), self.assertRaises(charts.InvalidChart):
-                charts.promote(archive(), "service", RC, "1.2.3", COMMIT, paths, IMAGE)
+                charts.promote(archive(), "service", RC, "1.2.3", COMMIT, paths, IMAGE, DESTINATIONS)
+
+    def test_app_version_reference_is_checked_without_explicit_version_paths(self):
+        files = {name: content for name, (content, _) in charts.unpack(archive(), "service").items()}
+        files["service/templates/pod.yaml"] = files["service/templates/pod.yaml"].replace(
+            b".Values.image.tag", b".Chart.AppVersion",
+        )
+        source = packed(files)
+        promoted = charts.promote(source, "service", RC, "1.2.3", COMMIT, [], IMAGE, DESTINATIONS)
+        self.assertIn(next(iter(DESTINATIONS)), charts.rendered_images(promoted).values())
+        with self.assertRaisesRegex(charts.InvalidChart, "not a verified promotion destination"):
+            charts.promote(source, "service", RC, "1.2.3", COMMIT, [], IMAGE, set())
+
+    def test_new_image_references_are_checked(self):
+        files = {name: content for name, (content, _) in charts.unpack(archive(), "service").items()}
+        files["service/templates/new.yaml"] = (
+            b'{{ if eq .Chart.AppVersion "1.2.3" }}\n'
+            b"apiVersion: v1\nkind: Pod\nmetadata:\n  name: new\nspec:\n"
+            b"  initContainers:\n    - name: init\n"
+            b"      image: nvcr.io/example/components-dev/not-promoted:1.2.3\n"
+            b"{{ end }}\n"
+        )
+        with self.assertRaisesRegex(charts.InvalidChart, "not a verified promotion destination"):
+            charts.promote(packed(files), "service", RC, "1.2.3", COMMIT,
+                           [["image", "tag"]], IMAGE, DESTINATIONS)
+
+    def test_disabled_template_still_validates_each_declared_repository(self):
+        files = {name: content for name, (content, _) in charts.unpack(archive(), "service").items()}
+        values = charts.yaml_object(files["service/values.yaml"])
+        values["enabled"] = False
+        values["image"]["repository"] = "nvcr.io/example/components-dev/not-promoted"
+        files["service/values.yaml"] = charts.encoded(values)
+        files["service/templates/pod.yaml"] = (
+            b"{{ if .Values.enabled }}\n" + files["service/templates/pod.yaml"] + b"{{ end }}\n"
+        )
+        with self.assertRaisesRegex(charts.InvalidChart, "declared chart image is not a verified"):
+            charts.promote(packed(files), "service", RC, "1.2.3", COMMIT,
+                           [["image", "tag"]], IMAGE, DESTINATIONS)
+
+    def test_declared_image_mapping_supports_separate_registry_and_rejects_unknown_shapes(self):
+        original = {name: content for name, (content, _) in charts.unpack(archive(), "service").items()}
+        for image, valid in [
+            ({"repository": "example/components-dev/service", "registry": "nvcr.io", "tag": RC}, True),
+            ({"repository": "example/components-dev/service", "registry": "other.invalid", "tag": RC}, False),
+            ({"tag": RC}, False),
+            ({"repository": "nvcr.io/example/components-dev/service", "registry": None, "tag": RC}, False),
+        ]:
+            with self.subTest(image=image):
+                files = copy.deepcopy(original)
+                values = charts.yaml_object(files["service/values.yaml"])
+                values["image"] = image
+                files["service/values.yaml"] = charts.encoded(values)
+                files["service/templates/pod.yaml"] = files["service/templates/pod.yaml"].replace(
+                    b".Values.image.repository }}",
+                    b".Values.image.registry }}/{{ .Values.image.repository }}",
+                )
+                if valid:
+                    charts.promote(packed(files), "service", RC, "1.2.3", COMMIT,
+                                   [["image", "tag"]], IMAGE, DESTINATIONS)
+                else:
+                    with self.assertRaises(charts.InvalidChart):
+                        charts.promote(packed(files), "service", RC, "1.2.3", COMMIT,
+                                       [["image", "tag"]], IMAGE, DESTINATIONS)
+
+    def test_render_errors_and_duplicate_resources_are_rejected(self):
+        files = {name: content for name, (content, _) in charts.unpack(archive(), "service").items()}
+        files["service/templates/duplicate.yaml"] = files["service/templates/pod.yaml"]
+        with self.assertRaisesRegex(charts.InvalidChart, "identity is invalid or duplicated"):
+            charts.promote(packed(files), "service", RC, "1.2.3", COMMIT,
+                           [["image", "tag"]], IMAGE, DESTINATIONS)
+        files["service/templates/duplicate.yaml"] = b"{{ required \"missing value\" .Values.missing }}"
+        with self.assertRaisesRegex(charts.InvalidChart, "image-reference render failed"):
+            charts.promote(packed(files), "service", RC, "1.2.3", COMMIT,
+                           [["image", "tag"]], IMAGE, DESTINATIONS)
 
     def test_wrong_source_revision_or_version(self):
         for rc, commit in [(RC, "b" * 40), ("1.2.3-rc.8", COMMIT)]:
             with self.subTest(rc=rc), self.assertRaises(charts.InvalidChart):
-                charts.promote(archive(), "service", rc, "1.2.3", commit, [], IMAGE)
+                charts.promote(archive(), "service", rc, "1.2.3", commit, [], IMAGE, DESTINATIONS)
 
     def test_unsafe_paths_links_duplicates(self):
         for name in ["../Chart.yaml", "/service/Chart.yaml", "service/../Chart.yaml",
@@ -341,6 +419,29 @@ class PromotionTests(unittest.TestCase):
         candidate["destination_ngc_path"] = "example/components"
         with self.assertRaisesRegex(p.PromotionError, "identical source and destination NGC paths"):
             p.promote(candidate, self.evidence, None, None, "23-1")
+
+    def test_unpromoted_chart_repository_fails_before_any_write(self):
+        for app_version in (False, True):
+            with self.subTest(app_version=app_version):
+                files = {name: content for name, (content, _) in charts.unpack(archive(), "service").items()}
+                values = charts.yaml_object(files["service/values.yaml"])
+                values["image"]["repository"] = "nvcr.io/example/components-dev/not-promoted"
+                files["service/values.yaml"] = charts.encoded(values)
+                candidate = config()
+                if app_version:
+                    files["service/templates/pod.yaml"] = files["service/templates/pod.yaml"].replace(
+                        b".Values.image.tag", b".Chart.AppVersion",
+                    )
+                    candidate["charts"][0]["version_value_paths"] = []
+                source = packed(files)
+                proof = evidence(source)
+                proof["charts"][0]["version_value_paths"] = candidate["charts"][0]["version_value_paths"]
+                registry = MemoryRegistry(source)
+                github = MemoryGitHub()
+                with self.assertRaisesRegex(charts.InvalidChart, "not a verified promotion destination"):
+                    p.promote(candidate, proof, github, registry, "23-1")
+                self.assertEqual(registry.writes, [])
+                self.assertIsNone(github.reservation)
 
     def test_partial_failure_retains_intent_and_resumes(self):
         self.registry.fail_chart = True

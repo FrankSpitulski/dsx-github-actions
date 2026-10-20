@@ -44,6 +44,7 @@ not dispatch inputs.
   "schema": 1,
   "enabled": false,
   "source_workflow": ".github/workflows/release-rc.yml",
+  "source_publisher_sha": "<reviewed-RC-publisher-commit-SHA>",
   "source_ngc_path": "example/components-dev",
   "destination_ngc_path": "example/components-dev",
   "images": ["service"],
@@ -56,6 +57,20 @@ not dispatch inputs.
 
 Use the same chart version-value paths as the RC publisher's `versionValuePaths`.
 An empty array is valid when the chart uses `Chart.AppVersion`.
+Each declared path must end in `tag`, with a sibling string `repository` and an
+optional string `registry`. The resulting `registry/repository:stable` (or
+`repository:stable` when registry is empty) must exactly match a verified image
+destination, even for disabled templates or values embedded in strings.
+Missing repositories and other version-value mapping shapes are unsupported and
+rejected before rendering.
+
+Set `source_publisher_sha` to the reviewed full commit SHA pinned by the product's
+RC caller. The selected Actions attempt must reference
+`dsx-ai-factory/dsx-github-actions/.github/workflows/release-candidate-publish.yml`
+at exactly that immutable SHA. Missing provenance, mutable refs, different
+repositories, and different publisher revisions are rejected. The helper fetches
+the exact attempt response rather than trusting run-list provenance fields.
+The shared repository does not embed its own commit SHA.
 
 When charts are included, source and destination NGC paths **must be identical**.
 Cross-namespace chart promotion is rejected before registry access, including
@@ -147,14 +162,24 @@ version/appVersion, promotion provenance annotations, and declared RC-valued
 paths in root `values.yaml` change. Templates, other values, lock files, and
 vendored dependencies retain their original bytes. A vendored RC dependency
 keeps its RC version and archive even when a separate stable chart is published
-for it. No dependency update, template rendering, or image rebuild occurs.
+for it. No dependency update or image rebuild occurs.
 Vendored image references also retain their RC tags unless an explicitly
 declared root value overrides them. A stable root chart is **not** a promise that
 every runtime image uses a stable tag. Retain the referenced RC images and their
 access permissions; this workflow performs no RC cleanup. Products requiring
 all-stable dependency references or namespace relocation are unsupported and
-must remain disabled until those transformations and rendered-reference checks
-are implemented and reviewed.
+must remain disabled until those transformations are implemented and reviewed.
+
+Before any writes, both archives are rendered with Helm's default client-side
+values and CRDs included. Every new or changed string `image` field, identified
+by resource identity and field path, must match an exact stable image destination
+already verified by the promotion plan. This covers explicit version paths and
+`Chart.AppVersion`-derived references. Missing/unpromoted image repositories,
+render errors, duplicate resource identities, and excessive render output stop
+promotion. Unchanged vendored RC references are retained. This bounded check does
+not certify values overrides, non-`image` custom-resource fields, or every
+conditional template branch; products needing those guarantees must remain
+disabled pending additional validation.
 
 The archive records the RC version, source commit, original chart digest, and RC
 manifest digest. This is traceability, not a new security approval or signing
@@ -172,6 +197,8 @@ A draft GitHub release stores the exact promotion intent before registry writes.
 Attempt reports remain release assets. Matching outputs are verified and reused
 on a rerun; different outputs are never deliberately overwritten. The original
 source run and attempt remain bound to that intent.
+The intent also binds the approved shared publisher SHA; changing it during a
+partial retry is rejected.
 
 The stable tag points to the RC commit. It is created only after all destination
 artifacts verify, then the draft is published without changing the latest-release

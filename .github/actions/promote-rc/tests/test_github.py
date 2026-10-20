@@ -8,7 +8,7 @@ import unittest
 from unittest.mock import Mock
 import zipfile
 
-from test_promotion import COMMIT, RC, archive, charts, config, evidence, p
+from test_promotion import COMMIT, PUBLISHER_SHA, RC, archive, charts, config, evidence, p
 
 
 class EvidenceTests(unittest.TestCase):
@@ -22,6 +22,9 @@ class EvidenceTests(unittest.TestCase):
             "head_branch": "release/1.2.3", "event": "push", "status": "completed",
             "conclusion": "success", "path": ".github/workflows/release-rc.yml",
             "head_repository": {"full_name": "example/product"},
+            "referenced_workflows": [{
+                "path": f"{p.SOURCE_PUBLISHER}@{PUBLISHER_SHA}", "sha": PUBLISHER_SHA,
+            }],
         }
         self.artifact = {
             "id": 42, "name": f"rc-promotion-manifest-{RC}-1", "expired": False,
@@ -60,6 +63,45 @@ class EvidenceTests(unittest.TestCase):
 
     def test_exact_successful_run_and_manifest(self):
         self.assertEqual(self.github.evidence(config(), RC), self.manifest)
+
+    def test_list_may_omit_provenance_but_exact_attempt_must_supply_it(self):
+        listed = {key: value for key, value in self.run.items() if key != "referenced_workflows"}
+        self.github.pages.side_effect = lambda path, key: (
+            [listed] if path.startswith("actions/workflows/") else [self.artifact]
+        )
+        self.assertEqual(self.github.evidence(config(), RC), self.manifest)
+        self.github.request.assert_any_call("repos/example/product/actions/runs/12/attempts/1")
+        self.run.pop("referenced_workflows")
+        with self.assertRaisesRegex(p.PromotionError, "shared publisher provenance"):
+            self.github.evidence(config(), RC)
+
+    def test_missing_mutable_wrong_or_ambiguous_publishers_are_rejected(self):
+        valid = copy.deepcopy(self.run["referenced_workflows"][0])
+        cases = [
+            None, [],
+            [{**valid, "path": f"{p.SOURCE_PUBLISHER}@main", "ref": "refs/heads/main"}],
+            [{**valid, "path": f"{p.SOURCE_PUBLISHER}@v1.2.3"}],
+            [{**valid, "path": f"other/repo/.github/workflows/release-candidate-publish.yml@{PUBLISHER_SHA}"}],
+            [{**valid, "path": f"{p.SOURCE_PUBLISHER}@{'e' * 40}", "sha": "e" * 40}],
+            [{**valid, "sha": "e" * 40}],
+            [{**valid, "ref": "refs/heads/main"}],
+            [valid, valid],
+        ]
+        for referenced in cases:
+            with self.subTest(referenced=referenced), self.assertRaises(p.PromotionError):
+                self.run["referenced_workflows"] = referenced
+                self.github.evidence(config(), RC)
+
+    def test_attempt_must_revalidate_identity_even_when_list_is_successful(self):
+        listed = copy.deepcopy(self.run)
+        self.github.pages.side_effect = lambda path, key: (
+            [listed] if path.startswith("actions/workflows/") else [self.artifact]
+        )
+        for field, value in [("run_attempt", 2), ("conclusion", "failure"),
+                             ("head_sha", "b" * 40), ("id", 99)]:
+            with self.subTest(field=field), self.assertRaises(p.PromotionError):
+                self.run = {**listed, field: value}
+                self.github.evidence(config(), RC)
 
     def test_wrong_run_identity_status_or_origin(self):
         for field, value in [
