@@ -59,6 +59,42 @@ steps:
       password: ${{ secrets.NVCR_TOKEN }}
 ```
 
+### Configure scan exceptions
+
+Set `security-scan-config` to a Grype YAML config file in the caller checkout.
+Relative paths resolve from the caller working directory. The action copies the
+file and mounts it read-only for every platform scan. Missing, unreadable, or
+invalid files fail the scan. An empty input uses Grype defaults.
+
+```yaml
+- uses: dsx-ai-factory/dsx-github-actions/.github/actions/docker-build@<commit-sha>
+  with:
+    image: ghcr.io/myorg/myapp
+    security-scan-enabled: "true"
+    security-scan-config: .github/grype.yaml
+```
+
+A caller can scope an accepted exception to one vulnerability, package version,
+and binary:
+
+```yaml
+# .github/grype.yaml
+ignore:
+  - vulnerability: GO-2026-6612
+    package:
+      name: golang.org/x/net
+      version: v0.58.0
+      location: /opt/spire/plugins/dsx-dpu-node-attestor-server
+    reason: DPF v26.8.0 dependency, pending upstream fix.
+```
+
+Grype retains suppressed findings in each JSON report's `ignoredMatches` array.
+The Critical gate applies to remaining findings. Callers own exception review
+and removal. Only the selected config file is mounted, so paths to other local
+files in the config are unavailable inside the scanner.
+
+The reusable build workflow exposes this input as `security_scan_config`.
+
 ### Prepare signed publication, with or without vulnerability scanning
 
 SBOM generation and vulnerability scanning are independent. Set
@@ -190,6 +226,7 @@ copying the example's `main` policy for a tag-based release.
 | `sbom` | SBOM setting (empty uses docker default) | No | `""` |
 | `security-scan-enabled` | If `true`, build once to OCI, scan every requested Linux platform, then optionally publish the same digest | No | `false` |
 | `security-scan-fail-on-critical` | If `true`, fail when Critical vulnerabilities are found | No | `true` |
+| `security-scan-config` | Path to a Grype config file, used when scanning is enabled | No | `""` |
 | `prepare-attestation` | Generate SBOMs independently of scanning; when pushing, publish only a candidate for `attest-image.yml` | No | `false` |
 
 ## Outputs

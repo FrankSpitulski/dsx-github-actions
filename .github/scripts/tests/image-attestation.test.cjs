@@ -189,6 +189,19 @@ for (const [name, rc, critical, success] of [
   });
 }
 
+for (const [name, config] of [
+  ['missing file', f => path.join(f.dir, 'missing.yaml')],
+  ['directory', f => f.dir],
+]) {
+  test(`scan rejects a Grype config that is a ${name}`, t => {
+    const f = fixture(t);
+    f.generate();
+    const result = f.run(path.join(buildScripts, 'scan-oci.sh'), { SCAN_CONFIG: config(f) });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /Grype config must be a readable file/);
+  });
+}
+
 test('promotion preserves single-manifest digests', t => {
   const f = fixture(t, ['amd64'], true);
   const result = f.run(path.join(scripts, 'promote-attested-image.sh'));
