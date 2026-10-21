@@ -50,7 +50,7 @@ jobs:
     timeout-minutes: 60
     environment: stable-release
     permissions:
-      contents: write
+      contents: read
       actions: read
       deployments: read
     steps:
@@ -86,9 +86,21 @@ jobs:
           sudo apt-get install -y --no-install-recommends skopeo
           bash dsx-promotion-tools/.github/actions/helm-shared/scripts/install-helm.sh
           bash dsx-promotion-tools/.github/actions/helm-shared/scripts/install-ngc.sh
+      - name: Create the repository-scoped release token
+        id: release-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ vars.RC_PROMOTION_APP_ID }}
+          private-key: ${{ secrets.RC_PROMOTION_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+          permission-workflows: write
+          skip-token-revoke: false
       - name: Verify and promote the selected RC
         env:
           GH_TOKEN: ${{ github.token }}
+          RC_PROMOTION_GITHUB_TOKEN: ${{ steps.release-token.outputs.token }}
           RC_VERSION: ${{ inputs.rc_version }}
           DSX_RELEASE_MODE: ${{ needs.admission.outputs.release-mode }}
           RC_PROMOTION_SOURCE_NGC_KEY: ${{ secrets.RC_PROMOTION_SOURCE_NGC_KEY }}

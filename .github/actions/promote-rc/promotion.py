@@ -146,15 +146,36 @@ def manifest(value, config, repository, rc, commit, run):
 
 
 class GitHub:
-    def __init__(self, repository):
+    def __init__(self, repository, write_token=None):
         require(matches(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository),
                 "invalid GitHub repository")
         self.repository = repository
         self.root = f"repos/{repository}"
+        self.write_token = write_token
+
+    def write_environment(self):
+        require(isinstance(self.write_token, str) and bool(self.write_token.strip()),
+                "the environment-scoped GitHub App release token is missing")
+        return {**os.environ, "GH_TOKEN": self.write_token}
 
     def request(self, path, method="GET", data=None, absent=False, binary=False):
         require(path.startswith(self.root + "/") or path == self.root,
                 "GitHub request escaped the product repository")
+        endpoint = path.partition("?")[0]
+        # Destination draft state needs the same push-capable identity on retries.
+        # Published source releases (/releases/tags/...) still use the normal token.
+        draft_read = method == "GET" and (
+            endpoint == f"{self.root}/releases" or re.fullmatch(
+                re.escape(self.root) + r"/releases/(?:[0-9]+(?:/assets)?|assets/[0-9]+)", endpoint)
+        )
+        env = self.write_environment() if draft_read else None
+        if method != "GET":
+            require((method == "POST" and path in {
+                f"{self.root}/releases", f"{self.root}/git/refs",
+            }) or (method == "PATCH" and re.fullmatch(
+                re.escape(self.root) + r"/releases/[0-9]+", path)),
+                "unsupported GitHub promotion write")
+            env = self.write_environment()
         args = ["gh", "api", "--method", method, "-H",
                 "Accept: application/vnd.github+json", path]
         if data is not None:
@@ -162,6 +183,7 @@ class GitHub:
         output = command(
             args, canonical(data) if data is not None else None,
             missing=(lambda error: "(HTTP 404)" in error) if absent else None,
+            env=env,
         )
         if output is None:
             return None
@@ -351,16 +373,17 @@ class GitHub:
         require(item["size"] <= 1024 * 1024, "promotion intent exceeds the size limit")
         args = ["gh", "api", "-H", "Accept: application/octet-stream",
                 f"{self.root}/releases/assets/{item['id']}"]
-        return json.loads(command(args))
+        return json.loads(command(args, env=self.write_environment()))
 
     def upload(self, release, name, data):
         require(matches(r"[A-Za-z0-9_.-]+", name), "invalid release asset name")
+        env = self.write_environment()
         # gh handles GitHub's asset upload host and never puts the token in argv.
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / name
             path.write_bytes(canonical(data))
             command(["gh", "release", "upload", release["tag_name"], str(path),
-                     "--repo", self.repository])
+                     "--repo", self.repository], env=env)
 
     def reserve(self, stable, commit, intent):
         existing_tag = self.tag(f"v{stable}")
@@ -618,6 +641,8 @@ def authenticate_registries(config, capture_only=False):
 
 
 def main():
+    # Keep the write token out of all inherited registry, parser, and read-tool environments.
+    write_token = os.environ.pop("RC_PROMOTION_GITHUB_TOKEN", "")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("operation", choices=("capture", "promote"))
     parser.add_argument("--policy", default=POLICY_PATH)
@@ -646,7 +671,8 @@ def main():
         return
     require(os.environ.get("DSX_RELEASE_MODE") == "rc-promotion", "promotion activation gate is off")
     config = policy(json.loads(Path(args.policy).read_text()))
-    github = GitHub(os.environ["GITHUB_REPOSITORY"])
+    github = GitHub(os.environ["GITHUB_REPOSITORY"], write_token=write_token)
+    github.write_environment()
     context = {
         "event": os.environ["GITHUB_EVENT_NAME"], "ref": os.environ["GITHUB_REF"],
         "sha": os.environ["GITHUB_SHA"], "protected": os.environ["GITHUB_REF_PROTECTED"],

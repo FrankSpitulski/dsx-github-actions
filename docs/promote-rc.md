@@ -24,7 +24,7 @@ jobs:
   promote:
     uses: dsx-ai-factory/dsx-github-actions/.github/workflows/promote-rc.yml@<reviewed-sha>
     permissions:
-      contents: write
+      contents: read
       actions: read
       deployments: read
     with:
@@ -124,12 +124,28 @@ Before activation, repository administrators must configure:
 - Environment-only secrets `RC_PROMOTION_SOURCE_NGC_KEY` and
   `RC_PROMOTION_DESTINATION_NGC_KEY`. Use source read and destination publish
   permissions. Do not create repository or organization secrets with these names.
+- A GitHub App installed only on the product repository with Contents and
+  Workflows write permissions. In `stable-release`, set variable
+  `RC_PROMOTION_APP_ID` and secret `RC_PROMOTION_APP_PRIVATE_KEY`; do not place
+  that private key in repository or organization secrets. The pinned official
+  token action requests only those permissions for the current repository and
+  revokes its short-lived installation token when the job ends. No PAT fallback.
 - Existing destination chart repositories, immutable stable-version policy, and
   registry access from the runner. Promotion does not create chart repositories
   or modify registry permissions.
 - Read access for the normal workflow token to run evidence and environment
   protection metadata. A denied metadata read stops promotion. Do not introduce
   an administrator token to bypass this check.
+
+GitHub requires Workflows write permission when a release's target commit changes
+workflow files relative to the default branch; `GITHUB_TOKEN` cannot receive that
+permission ([GitHub release API](https://docs.github.com/en/rest/releases/releases#create-a-release)).
+The App token is used only for release/ref writes, release-asset uploads, and
+destination draft-release/intent reads needed for retries. GitHub limits draft
+release visibility to push-capable identities. Source evidence, protection checks,
+and checkout keep the normal read-only workflow token. The App token is not passed
+to registry tools or checked-out product code; no RC code is executed by promotion.
+Missing App credentials stop before writes.
 
 One repository variable, `DSX_RELEASE_MODE`, coordinates the cutover. Unset or
 any value other than `rc-promotion` preserves legacy publishing. Every job in an

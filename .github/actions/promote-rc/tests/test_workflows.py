@@ -31,11 +31,37 @@ class WorkflowTests(unittest.TestCase):
         publish = workflow["jobs"]["promote"]
         self.assertEqual(publish["needs"], "admission")
         self.assertEqual(publish["environment"], "stable-release")
+        self.assertEqual(publish["permissions"], {
+            "contents": "read", "actions": "read", "deployments": "read",
+        })
         step = next(step for step in publish["steps"] if step.get("name") == "Verify and promote the selected RC")
         for key in ("RC_PROMOTION_SOURCE_NGC_KEY", "RC_PROMOTION_DESTINATION_NGC_KEY"):
             self.assertEqual(step["env"][key], "${{ secrets." + key + " }}")
         self.assertEqual(step["env"]["GH_TOKEN"], "${{ github.token }}")
+        self.assertEqual(step["env"]["RC_PROMOTION_GITHUB_TOKEN"], "${{ steps.release-token.outputs.token }}")
         self.assertEqual(step["env"]["DSX_RELEASE_MODE"], "${{ needs.admission.outputs.release-mode }}")
+
+    def test_app_token_is_environment_scoped_repository_restricted_and_revoked(self):
+        workflow = charts.yaml_object((ROOT / "workflows/promote-rc.yml").read_bytes())
+        steps = workflow["jobs"]["promote"]["steps"]
+        mint = next(step for step in steps if step.get("id") == "release-token")
+        self.assertEqual(mint["uses"],
+                         "actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510")
+        self.assertEqual(mint["with"], {
+            "app-id": "${{ vars.RC_PROMOTION_APP_ID }}",
+            "private-key": "${{ secrets.RC_PROMOTION_APP_PRIVATE_KEY }}",
+            "owner": "${{ github.repository_owner }}",
+            "repositories": "${{ github.event.repository.name }}",
+            "permission-contents": "write", "permission-workflows": "write",
+            "skip-token-revoke": False,
+        })
+        for step in steps:
+            if step.get("uses", "").startswith("actions/checkout@"):
+                self.assertLess(steps.index(step), steps.index(mint))
+                self.assertIs(step["with"]["persist-credentials"], False)
+                self.assertNotIn("token", step["with"])
+            if step.get("name") != "Verify and promote the selected RC":
+                self.assertNotIn("steps.release-token.outputs.token", str(step))
 
     def test_promotion_does_not_rebuild_or_run_the_rc_publisher(self):
         workflow = charts.yaml_object((ROOT / "workflows/promote-rc.yml").read_bytes())
