@@ -1,0 +1,122 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: Promote RC
+
+on:
+  workflow_call:
+    inputs:
+      rc_version:
+        description: Exact verified RC version without the v prefix
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dsx-stable-release-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  admission:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      release-mode: ${{ steps.admission.outputs.release-mode }}
+    steps:
+      - name: Require a manual dispatch from the protected default branch
+        id: admission
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          PROTECTED: ${{ github.ref_protected }}
+          WORKFLOW_SHA: ${{ job.workflow_sha }}
+          RC_VERSION: ${{ inputs.rc_version }}
+          RELEASE_MODE: ${{ vars.DSX_RELEASE_MODE }}
+        run: |
+          set -euo pipefail
+          [[ "$EVENT" == workflow_dispatch ]]
+          [[ "$REF" == "refs/heads/$DEFAULT_BRANCH" && "$PROTECTED" == true ]]
+          [[ "$WORKFLOW_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$RC_VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-rc\.[1-9][0-9]*$ ]]
+          [[ "$RELEASE_MODE" == rc-promotion ]]
+          echo "release-mode=rc-promotion" >> "$GITHUB_OUTPUT"
+
+  promote:
+    needs: admission
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    environment: stable-release
+    permissions:
+      contents: read
+      actions: read
+      deployments: read
+    steps:
+      - name: Select temporary registry credential paths
+        run: |
+          {
+            echo "PROMOTION_AUTH_ROOT=$RUNNER_TEMP/rc-promotion-auth"
+            echo "HELM_CONFIG_HOME=$RUNNER_TEMP/rc-promotion-helm/config"
+            echo "HELM_CACHE_HOME=$RUNNER_TEMP/rc-promotion-helm/cache"
+            echo "HELM_DATA_HOME=$RUNNER_TEMP/rc-promotion-helm/data"
+          } >> "$GITHUB_ENV"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          path: promotion-source
+          persist-credentials: false
+          sparse-checkout: .github/rc-promotion.json
+          sparse-checkout-cone-mode: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: dsx-promotion-tools
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24"
+      - uses: dcarbone/install-yq-action@64b1b9eb28920bb1a4c13c05321df284f9a8f940 # v1.1.1
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Install registry tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends skopeo
+          bash dsx-promotion-tools/.github/actions/helm-shared/scripts/install-helm.sh
+          bash dsx-promotion-tools/.github/actions/helm-shared/scripts/install-ngc.sh
+      - name: Create the repository-scoped release token
+        id: release-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ vars.RC_PROMOTION_APP_ID }}
+          private-key: ${{ secrets.RC_PROMOTION_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+          permission-workflows: write
+          skip-token-revoke: false
+      - name: Verify and promote the selected RC
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RC_PROMOTION_GITHUB_TOKEN: ${{ steps.release-token.outputs.token }}
+          RC_VERSION: ${{ inputs.rc_version }}
+          DSX_RELEASE_MODE: ${{ needs.admission.outputs.release-mode }}
+          RC_PROMOTION_SOURCE_NGC_KEY: ${{ secrets.RC_PROMOTION_SOURCE_NGC_KEY }}
+          RC_PROMOTION_DESTINATION_NGC_KEY: ${{ secrets.RC_PROMOTION_DESTINATION_NGC_KEY }}
+        run: |
+          set +x
+          python3 dsx-promotion-tools/.github/actions/promote-rc/promotion.py promote \
+            --policy promotion-source/.github/rc-promotion.json
+      - name: Preserve the promotion result
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: promotion-result-${{ github.run_id }}-${{ github.run_attempt }}
+          path: promotion-result.json
+          if-no-files-found: ignore
+          retention-days: 90
+      - name: Remove local registry credentials
+        if: always()
+        run: rm -rf -- "$PROMOTION_AUTH_ROOT" "$HELM_CONFIG_HOME" "$HELM_CACHE_HOME" "$HELM_DATA_HOME"
