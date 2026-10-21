@@ -8,6 +8,7 @@ import gzip
 import hashlib
 import io
 import json
+import os
 from pathlib import PurePosixPath
 import subprocess
 import tarfile
@@ -43,6 +44,27 @@ def yaml_object(data):
 def encoded(value):
     # JSON is a YAML subset and avoids serializer-dependent archive bytes.
     return (json.dumps(value, sort_keys=True, indent=2) + "\n").encode()
+
+
+def assign(data, assignments, expected):
+    # Keep untouched YAML nodes: a JSON round-trip changes Helm's no/off scalars.
+    expression = " | ".join(
+        "." + "".join(f"[{json.dumps(key)}]" for key in keys) +
+        f" = strenv(DSX_VALUE_{index})"
+        for index, (keys, _) in enumerate(assignments)
+    )
+    env = {**os.environ, **{
+        f"DSX_VALUE_{index}": value for index, (_, value) in enumerate(assignments)
+    }}
+    result = subprocess.run(
+        ["yq", "eval", "-p=yaml", "-o=yaml", expression, "-"],
+        input=data, capture_output=True, check=False, timeout=30, env=env,
+    )
+    if result.returncode:
+        raise InvalidChart("chart YAML could not be updated")
+    if yaml_object(result.stdout) != expected:
+        raise InvalidChart("chart update changed undeclared content")
+    return result.stdout
 
 
 def unpack(data, name):
@@ -99,12 +121,17 @@ def promote(data, name, rc, stable, commit, value_paths, manifest_digest, destin
     metadata = copy.deepcopy(metadata)
     metadata["version"] = stable
     metadata["appVersion"] = stable
-    metadata["annotations"].update({
+    annotations = {
         "dsx.nvidia.com/promoted-from": rc,
         "dsx.nvidia.com/source-chart-digest": digest(data),
         "dsx.nvidia.com/rc-manifest-digest": manifest_digest,
-    })
-    files[f"{name}/Chart.yaml"] = (encoded(metadata), files[f"{name}/Chart.yaml"][1])
+    }
+    metadata["annotations"].update(annotations)
+    entry = f"{name}/Chart.yaml"
+    assignments = [(("version",), stable), (("appVersion",), stable)] + [
+        (("annotations", key), value) for key, value in annotations.items()
+    ]
+    files[entry] = (assign(files[entry][0], assignments, metadata), files[entry][1])
     if value_paths:
         entry = f"{name}/values.yaml"
         if entry not in files:
@@ -127,7 +154,10 @@ def promote(data, name, rc, stable, commit, value_paths, manifest_digest, destin
             if reference not in destination_images:
                 raise InvalidChart("declared chart image is not a verified promotion destination")
             target[keys[-1]] = stable
-        files[entry] = (encoded(values), files[entry][1])
+        files[entry] = (
+            assign(files[entry][0], [(keys, stable) for keys in value_paths], values),
+            files[entry][1],
+        )
     output = io.BytesIO()
     with gzip.GzipFile(fileobj=output, mode="wb", filename="", mtime=0) as compressed:
         with tarfile.open(fileobj=compressed, mode="w", format=tarfile.USTAR_FORMAT) as archive:

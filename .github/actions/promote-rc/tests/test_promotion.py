@@ -263,6 +263,93 @@ class PolicyTests(unittest.TestCase):
 
 
 class ChartTests(unittest.TestCase):
+    def test_promotion_preserves_helm_scalar_semantics_comments_and_unrelated_aliases(self):
+        cases = {
+            "rawNo": ("no", False), "rawOff": ("off", False),
+            "rawOn": ("on", True), "rawYes": ("yes", True),
+            "quotedNo": ('"no"', "no"), "quotedOff": ("'off'", "off"),
+            "quotedOn": ('"on"', "on"), "quotedYes": ("'yes'", "yes"),
+        }
+        values = "# keep values comment\n" + "".join(
+            f"{key}:\n  enabled: {literal} # keep {key}\n"
+            for key, (literal, _) in cases.items()
+        ) + (
+            "fileMode: 0644 # keep octal mode\n"
+            "quotedMode: '0644'\n"
+            "settings: &settings\n  mode: 0644\n  enabled: off\n"
+            "settingsCopy: *settings # keep unrelated alias\n"
+            f"image:\n  repository: nvcr.io/example/components-dev/service\n  tag: {RC}\n"
+        )
+        source = packed({
+            "service/Chart.yaml": (
+                "# keep chart comment\napiVersion: v2\nname: service\n"
+                f"version: {RC}\nappVersion: {RC}\nannotations:\n"
+                f"  dsx.nvidia.com/source-revision: {COMMIT}\n"
+            ).encode(),
+            "service/values.yaml": values.encode(),
+            "service/templates/configmap.yaml": (
+                b"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: scalar-contract\n"
+                b"data:\n  values: {{ .Values | toJson | quote }}\n"
+            ),
+        })
+
+        def rendered_values(data):
+            with tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "service.tgz"
+                path.write_bytes(data)
+                result = subprocess.run(
+                    ["helm", "template", "scalar-contract", str(path)],
+                    capture_output=True, timeout=30,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                return json.loads(charts.yaml_object(result.stdout)["data"]["values"])
+
+        before = rendered_values(source)
+        for key, (_, expected) in cases.items():
+            with self.subTest(key=key):
+                self.assertEqual(before[key]["enabled"], expected)
+                self.assertIs(type(before[key]["enabled"]), type(expected))
+        self.assertEqual(before["fileMode"], 0o644)
+        self.assertEqual(before["quotedMode"], "0644")
+        self.assertEqual(before["settings"], {"mode": 0o644, "enabled": False})
+        self.assertEqual(before["settingsCopy"], before["settings"])
+
+        changed = charts.promote(source, "service", RC, "1.2.3", COMMIT,
+                                 [["image", "tag"]], IMAGE, DESTINATIONS)
+        expected = copy.deepcopy(before)
+        expected["image"]["tag"] = "1.2.3"
+        self.assertEqual(rendered_values(changed), expected)
+        after = charts.unpack(changed, "service")
+        self.assertIn(b"# keep chart comment", after["service/Chart.yaml"][0])
+        for preserved in [b"# keep values comment", b"# keep octal mode",
+                          b"# keep unrelated alias", b"&settings", b"*settings"]:
+            self.assertIn(preserved, after["service/values.yaml"][0])
+        for key in cases:
+            self.assertIn(f"# keep {key}".encode(), after["service/values.yaml"][0])
+        self.assertEqual(changed, charts.promote(source, "service", RC, "1.2.3", COMMIT,
+                                               [["image", "tag"]], IMAGE, DESTINATIONS))
+
+    def test_declared_tag_alias_cannot_change_an_undeclared_field(self):
+        files = {name: content for name, (content, _) in charts.unpack(archive(), "service").items()}
+        files["service/values.yaml"] = (
+            "image: &sharedImage\n"
+            "  repository: nvcr.io/example/components-dev/service\n"
+            f"  tag: {RC}\n"
+            "undeclaredImage: *sharedImage\n"
+        ).encode()
+        source = packed(files)
+        original = charts.yaml_object(files["service/values.yaml"])
+        self.assertEqual(original["undeclaredImage"]["tag"], RC)
+        with self.assertRaises(charts.InvalidChart):
+            charts.promote(source, "service", RC, "1.2.3", COMMIT,
+                           [["image", "tag"]], IMAGE, DESTINATIONS)
+        registry = MemoryRegistry(source)
+        github = MemoryGitHub()
+        with self.assertRaises(charts.InvalidChart):
+            p.promote(config(), evidence(source), github, registry, "23-1")
+        self.assertEqual(registry.writes, [])
+        self.assertIsNone(github.reservation)
+
     def test_metadata_only_promotion_and_deterministic_bytes(self):
         source = archive()
         before = charts.unpack(source, "service")
