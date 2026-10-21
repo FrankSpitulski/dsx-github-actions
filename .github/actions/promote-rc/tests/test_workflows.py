@@ -37,6 +37,17 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(step["env"]["GH_TOKEN"], "${{ github.token }}")
         self.assertEqual(step["env"]["DSX_RELEASE_MODE"], "${{ needs.admission.outputs.release-mode }}")
 
+    def test_promotion_does_not_rebuild_or_run_the_rc_publisher(self):
+        workflow = charts.yaml_object((ROOT / "workflows/promote-rc.yml").read_bytes())
+        for job in workflow["jobs"].values():
+            self.assertNotIn("uses", job)
+            for step in job["steps"]:
+                self.assertNotIn("docker-build", step.get("uses", ""))
+                self.assertNotIn("build-push-action", step.get("uses", ""))
+                for build_command in ("docker build ", "buildx build ", "helm package ",
+                                      "helm dependency build", "helm dependency update"):
+                    self.assertNotIn(build_command, step.get("run", ""))
+
     def test_rc_evidence_is_additive_opt_in_and_waits_for_all_artifacts(self):
         workflow = charts.yaml_object((ROOT / "workflows/release-candidate-publish.yml").read_bytes())
         option = workflow["on"]["workflow_call"]["inputs"]["promotion-manifest"]

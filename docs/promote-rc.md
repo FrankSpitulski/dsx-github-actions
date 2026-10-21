@@ -34,7 +34,8 @@ jobs:
 Do not pass secrets, add `secrets: inherit`, or add concurrency to this caller.
 The shared workflow owns the publishing environment and stable-release lock.
 
-Add `.github/rc-promotion.json`. Keep `enabled` false until the rollout review.
+Add `.github/rc-promotion.json` on the protected default branch. Keep `enabled`
+false until the rollout review.
 Declare the complete inventory, including every chart whose stable version is
 required. Registry paths and artifact declarations are reviewed configuration,
 not dispatch inputs.
@@ -85,12 +86,19 @@ rewrite image repositories or relocate vendored dependency images. The example
 therefore publishes stable tags alongside RC tags in the same namespace. Only
 image-only policies may use different source and destination paths.
 
-Opt in to evidence capture in the existing RC caller:
+On `release/X.Y.Z`, update the existing RC caller to the approved shared
+publisher SHA and opt in to evidence capture:
 
 ```yaml
 with:
   promotion-manifest: true
 ```
+
+The release branch needs the producer update, not the promotion dispatcher or
+policy. Capture reads the RC caller's artifact declarations without reading
+`.github/rc-promotion.json`. Dispatch promotion from the protected default
+branch, selecting the QA-approved RC version as input. Merging the default-branch
+caller does not update a release branch or retrofit an older RC's evidence.
 
 The RC publisher records all image digests, chart archive digests, source commit,
 workflow path, run ID, and run attempt after every artifact job succeeds. It

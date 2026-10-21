@@ -550,6 +550,28 @@ class PromotionTests(unittest.TestCase):
 
 
 class CaptureTests(unittest.TestCase):
+    def test_capture_does_not_read_default_branch_policy_or_activation(self):
+        data = archive()
+        expected = evidence(data)
+        env = {
+            "PATH": os.environ["PATH"],
+            "RC_IMAGES": json.dumps([{"name": "service"}]),
+            "RC_CHARTS": json.dumps([{"name": "service", "versionValuePaths": [["image", "tag"]]}]),
+            "RC_NGC_PATH": "example/components-dev", "RC_VERSION": RC,
+            "GITHUB_REPOSITORY": "example/product", "GITHUB_SHA": COMMIT,
+            "GITHUB_RUN_ID": "12", "GITHUB_RUN_ATTEMPT": "1",
+            "GITHUB_WORKFLOW_REF": "example/product/.github/workflows/release-rc.yml@refs/heads/release/1.2.3",
+        }
+        with patch.dict(os.environ, env, clear=True), \
+                patch.object(sys, "argv", ["promotion.py", "capture", "--policy", "missing.json"]), \
+                patch.object(p, "authenticate_registries") as auth, \
+                patch.object(p, "Registry", return_value=MemoryRegistry(data)), \
+                patch.object(Path, "read_text", side_effect=AssertionError("capture read a policy")), \
+                patch.object(Path, "write_bytes") as write:
+            p.main()
+        self.assertTrue(auth.call_args.kwargs["capture_only"])
+        self.assertEqual(json.loads(write.call_args.args[0]), expected)
+
     def test_captures_exact_inventory_without_publishing(self):
         data = archive()
         expected = evidence(data)
@@ -664,6 +686,19 @@ class GateTests(unittest.TestCase):
 
 
 class ToolTests(unittest.TestCase):
+    def test_image_copy_preserves_all_manifests_from_the_verified_digest(self):
+        env = {"SOURCE_DOCKER_CONFIG": "/tmp/source-auth",
+               "DESTINATION_DOCKER_CONFIG": "/tmp/destination-auth"}
+        with patch.dict(os.environ, env), patch.object(p, "command") as command:
+            p.Registry("example/components-dev").copy_image("service", IMAGE, "1.2.3")
+        command.assert_called_once_with([
+            "skopeo", "copy", "--all", "--preserve-digests",
+            "--src-authfile", "/tmp/source-auth/config.json",
+            "--dest-authfile", "/tmp/destination-auth/config.json",
+            f"docker://nvcr.io/example/components-dev/service@{IMAGE}",
+            "docker://nvcr.io/example/components-dev/service:1.2.3",
+        ])
+
     def test_registry_absence_is_narrow(self):
         registry = p.Registry("example/components-dev", "example/components")
         ref = "nvcr.io/example/components/service:1.2.3"
