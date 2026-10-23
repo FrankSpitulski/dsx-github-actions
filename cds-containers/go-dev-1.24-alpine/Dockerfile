@@ -13,7 +13,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-FROM golang:1.27.2-alpine@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d
+FROM golang:1.27.3-alpine@sha256:b8c9b82affbbb82a020bbcf998dad2ba9516944ac7e883524642a481a9505e9c
+
+RUN test "$(GOTOOLCHAIN=local go env GOVERSION)" = "go1.27.3"
 
 # Set locale for proper terminal support
 ENV LANG=C.UTF-8
@@ -29,16 +31,21 @@ RUN apk add --no-cache \
     build-base \
     procps \
     net-tools \
-    ca-certificates
+    "ca-certificates>=20261020-r0" \
+    && update-ca-certificates
 
 # Install Air for hot reloading
 RUN go install github.com/air-verse/air@v1.62.0
 
 # Install Delve for debugging
-RUN go install github.com/go-delve/delve/cmd/dlv@v1.25.2
+RUN go install github.com/go-delve/delve/cmd/dlv@v1.27.0
 
 # Install other useful development tools
-RUN go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8
+# Keep the v1 CLI/config while updating the Go 1.27 export-data reader.
+COPY go-tools/golangci-lint/ /tmp/golangci-lint/
+RUN cd /tmp/golangci-lint \
+    && go install -mod=readonly github.com/golangci/golangci-lint/cmd/golangci-lint \
+    && rm -rf /tmp/golangci-lint
 RUN go install golang.org/x/tools/cmd/goimports@v0.37.0
 RUN go install github.com/swaggo/swag/cmd/swag@v1.16.4
 

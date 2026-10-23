@@ -13,7 +13,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-FROM golang:1.27.2@sha256:820153096fda4de6ac1b7194d12e416b7dd8f4e9a33d17e0345b111b945162d8
+FROM golang:1.27.3@sha256:f20d83a83e18dbd2a4714b8ffd4b30b287b6243962dd75608e86abcc63ba4efc
+
+RUN test "$(GOTOOLCHAIN=local go env GOVERSION)" = "go1.27.3"
 
 # Set locale for proper terminal support
 ENV LANG=C.UTF-8
@@ -27,16 +29,23 @@ RUN apt-get update && apt-get install -y \
     vim \
     procps \
     net-tools \
+    ca-certificates \
+    && dpkg --compare-versions "$(dpkg-query -W -f='${Version}' ca-certificates)" ge "20250419+deb13u1" \
+    && update-ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Air for hot reloading
 RUN go install github.com/air-verse/air@v1.62.0
 
 # Install Delve for debugging
-RUN go install github.com/go-delve/delve/cmd/dlv@v1.25.2
+RUN go install github.com/go-delve/delve/cmd/dlv@v1.27.0
 
 # Install other useful development tools
-RUN go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8
+# Keep the v1 CLI/config while updating the Go 1.27 export-data reader.
+COPY go-tools/golangci-lint/ /tmp/golangci-lint/
+RUN cd /tmp/golangci-lint \
+    && go install -mod=readonly github.com/golangci/golangci-lint/cmd/golangci-lint \
+    && rm -rf /tmp/golangci-lint
 RUN go install golang.org/x/tools/cmd/goimports@v0.37.0
 RUN go install github.com/swaggo/swag/cmd/swag@v1.16.4
 

@@ -11,7 +11,7 @@ Container images for CDS tooling, optimized for GitHub Actions workflows. These 
 ### 1. `cds-tools` - CDS Tools Container
 Comprehensive tooling for infrastructure automation, CI/CD, and Kubernetes operations.
 
-**Image**: `ghcr.io/dsx-ai-factory/dsx-cds-tools:0.0.2`
+**Image**: `ghcr.io/dsx-ai-factory/dsx-cds-tools:0.1.0`
 
 **Includes**:
 - **Bazel** (multiple versions):
@@ -22,17 +22,18 @@ Comprehensive tooling for infrastructure automation, CI/CD, and Kubernetes opera
 - **Infrastructure**: terraform, terragrunt
 - **NVIDIA**: NGC CLI
 - **Container tools**: docker CLI, regctl
-- **Dev tools**: Node.js 24, Python 3, git, make, jq, yq, uv (Python package manager)
+- **Dev tools**: Node.js 24.22.1, Python 3, git, make, jq, yq, uv (Python package manager)
 
 **Size**: ~500MB
 
 ### 2. `cds-go-dev-1.24-alpine` - Go Development (Alpine)
-Lightweight Go 1.24 development environment with essential tooling.
+Lightweight Go 1.27.3 development environment with essential tooling. The `1.24`
+image name is retained for compatibility; it no longer identifies the toolchain version.
 
-**Image**: `ghcr.io/dsx-ai-factory/dsx-cds-go-dev-1.24-alpine:0.0.2`
+**Image**: `ghcr.io/dsx-ai-factory/dsx-cds-go-dev-1.24-alpine:0.1.0`
 
 **Includes**:
-- Go 1.24.3 (Alpine-based)
+- Go 1.27.3 (Alpine-based)
 - Air (hot reloading)
 - Delve (debugging)
 - golangci-lint
@@ -44,9 +45,10 @@ Lightweight Go 1.24 development environment with essential tooling.
 **Use when**: You need a minimal, fast container for Go development and CI.
 
 ### 3. `cds-go-dev-1.24-debian` - Go Development (Debian)
-Full-featured Go 1.24 environment with better C library compatibility.
+Full-featured Go 1.27.3 environment with better C library compatibility. The public
+image name is unchanged.
 
-**Image**: `ghcr.io/dsx-ai-factory/dsx-cds-go-dev-1.24-debian:0.0.2`
+**Image**: `ghcr.io/dsx-ai-factory/dsx-cds-go-dev-1.24-debian:0.1.0`
 
 **Size**: ~300MB+
 
@@ -69,7 +71,7 @@ jobs:
       packages: read  # Required to pull from GHCR
 
     container:
-      image: ghcr.io/dsx-ai-factory/dsx-cds-tools:0.0.2
+      image: ghcr.io/dsx-ai-factory/dsx-cds-tools:0.1.0
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -109,14 +111,14 @@ jobs:
           docker run --rm \
             -v $PWD:/workspace \
             -w /workspace \
-            ghcr.io/dsx-ai-factory/dsx-cds-go-dev-1.24-alpine:0.0.2 \
+            ghcr.io/dsx-ai-factory/dsx-cds-go-dev-1.24-alpine:0.1.0 \
             go build ./...
 ```
 
 ### Method 3: Building Custom Image Based on CDS Containers
 
 ```dockerfile
-FROM ghcr.io/dsx-ai-factory/dsx-cds-tools:0.0.2
+FROM ghcr.io/dsx-ai-factory/dsx-cds-tools:0.1.0
 
 # Add your custom tools
 RUN apt-get update && apt-get install -y \
@@ -149,7 +151,7 @@ WORKDIR /app
 ## 🏗️ Versioning and Updates
 
 ### Current Version
-The current version is defined in [`VERSION`](./VERSION): **0.0.2**
+The current version is defined in [`VERSION`](./VERSION): **0.1.0**
 
 This file contains only the semantic version number (e.g., `0.0.1`).
 
@@ -164,6 +166,20 @@ the strongest reference:
 container:
   image: ghcr.io/dsx-ai-factory/dsx-cds-tools@sha256:<digest>
 ```
+
+### CA Incident Remediation (0.1.0)
+
+The legacy `go-dev-1.24-*` image names now contain **Go 1.27.3**, not Go 1.24.
+The toolchain upgrade uses a minor release, **0.1.0**, with unchanged public
+paths. Go 1.27.2 lacks the [upstream CA fix](https://groups.google.com/g/golang-announce/c/66pojueaQek).
+The tools image pins [Node 24.22.1](https://nodejs.org/en/blog/release/v24.22.1).
+Delve v1.27.0 supports this toolchain. golangci-lint stays on v1.64.8, built with
+pinned x/tools v0.52.0 for Go 1.27 export data; v1 CLI/config remain unchanged.
+All images refresh distro-managed CA stores with patched package minimums:
+[Alpine](https://pkgs.alpinelinux.org/package/v3.24/main/x86_64/ca-certificates)
+`20261020-r0`, [Debian](https://tracker.debian.org/news/1813397/accepted-ca-certificates-20250419deb13u1-source-into-stable-security/)
+`20250419+deb13u1`, and [Ubuntu](https://ubuntu.com/security/notices/USN-8944-1)
+`20260816ubuntu0.22.04.1`. No custom root blocklist or TLS bypass is used.
 
 ### Updating Containers
 
@@ -281,8 +297,8 @@ git push
 
 | GitLab Registry | GitHub GHCR |
 |-----------------|-------------|
-| `registry.gitlab-master.nvidia.com/cds/cds-containers/tools:latest` | `ghcr.io/dsx-ai-factory/dsx-cds-tools:0.0.2` |
-| `registry.gitlab-master.nvidia.com/cds/cds-containers/go-dev-1.24-alpine:1.0.0` | `ghcr.io/dsx-ai-factory/dsx-cds-go-dev-1.24-alpine:0.0.2` |
+| `registry.gitlab-master.nvidia.com/cds/cds-containers/tools:latest` | `ghcr.io/dsx-ai-factory/dsx-cds-tools:0.1.0` |
+| `registry.gitlab-master.nvidia.com/cds/cds-containers/go-dev-1.24-alpine:1.0.0` | `ghcr.io/dsx-ai-factory/dsx-cds-go-dev-1.24-alpine:0.1.0` |
 
 ### Key Differences
 
@@ -325,7 +341,7 @@ If your Makefile uses `bazel` commands directly, override the default:
 jobs:
   build:
     container:
-      image: ghcr.io/dsx-ai-factory/dsx-cds-tools:0.0.2
+      image: ghcr.io/dsx-ai-factory/dsx-cds-tools:0.1.0
 
     steps:
       - name: Override bazel to use version 6.5.0
@@ -366,6 +382,21 @@ jobs:
 6. Push changes - pipeline will build and test automatically
 
 ### Local Testing
+
+Stream the runtime checks into the exact built `linux/amd64` image. They assert
+Go 1.27.3 (including tool build metadata), Node 24 >= 24.22.1, distro CA versions,
+existing tool commands, v1 lint CLI/config, debugging, compilation, and CGO:
+
+```bash
+docker run --rm -i "$GO_IMAGE" sh -s -- go < cds-containers/tests/security-runtime.sh
+docker run --rm -i "$TOOLS_IMAGE" sh -s -- tools < cds-containers/tests/security-runtime.sh
+python3 -B -m unittest discover -s cds-containers/tests -v
+```
+
+The tests make no external TLS requests and disable Go toolchain auto-download
+only during testing. Delve requires the runner to permit tracing its child
+process. Third-party bundled runtimes or CA stores need separate
+upstream maintenance. Host checks do not replace target-container validation.
 
 ```bash
 # Build locally
