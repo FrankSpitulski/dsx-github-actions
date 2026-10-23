@@ -2,6 +2,20 @@
 
 This directory contains automated workflows for the dsx-github-actions repository.
 
+## Runtime Requirements
+
+Workflows install Node.js 24.22.1 for release scripts and tests, including the
+October 2026 CA security fixes. Updating an action SHA or using `setup-node` does
+not replace the Node.js binaries bundled with a self-hosted Actions runner.
+Runner owners must also update those binaries and the host CA packages. Runner
+[2.338.1](https://github.com/actions/runner/releases/tag/v2.338.1) bundles Node.js
+24.22.1. The older minimum runner version for Node 24 compatibility is not
+sufficient evidence of the CA fix.
+
+Product repositories pinned to an older shared-actions SHA need a pin update.
+Rebuild their artifacts with the patched toolchain; existing binaries do not
+change when the shared actions are updated.
+
 ## Release Candidate Publish
 
 Use [`release-candidate-publish.yml`](release-candidate-publish.yml) to publish

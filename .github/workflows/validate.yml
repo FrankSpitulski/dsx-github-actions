@@ -4,6 +4,7 @@
 name: Validate
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - main
@@ -13,6 +14,74 @@ permissions:
   contents: read
 
 jobs:
+  runtime-and-artifacts:
+    name: Runtime and artifact compatibility
+    runs-on: linux-amd64-cpu4
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Verify the runner-bundled JavaScript runtime
+        uses: ./.github/tests/runner-node
+      - name: Prepare artifact fixtures
+        run: |
+          mkdir -p fixtures
+          printf '{"image":"example.invalid/test","digest":"sha256:fixture"}\n' > fixtures/digest.json
+          printf '{"version":"1.2.3-rc.1","commit":"fixture"}\n' > fixtures/rc-promotion-manifest.json
+      - name: Upload legacy evidence
+        id: legacy
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2, compatibility fixture
+        with:
+          name: legacy-runtime-fixture-${{ github.run_id }}-${{ github.run_attempt }}
+          path: fixtures/digest.json
+          if-no-files-found: error
+          retention-days: 1
+      - name: Upload current evidence
+        id: current
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: current-runtime-fixture-${{ github.run_id }}-${{ github.run_attempt }}
+          path: fixtures/rc-promotion-manifest.json
+          archive: true
+          if-no-files-found: error
+          retention-days: 1
+      - name: Download legacy evidence with the new action
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ steps.legacy.outputs.artifact-id }}
+          path: restored/legacy
+          merge-multiple: true
+      - name: Download current evidence with the new action
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ steps.current.outputs.artifact-id }}
+          path: restored/current
+          merge-multiple: true
+      - name: Verify unchanged artifact bytes and promotion ZIP contract
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_ID: ${{ steps.current.outputs.artifact-id }}
+          ARTIFACT_DIGEST: ${{ steps.current.outputs.artifact-digest }}
+        run: |
+          cmp fixtures/digest.json restored/legacy/digest.json
+          cmp fixtures/rc-promotion-manifest.json restored/current/rc-promotion-manifest.json
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$ARTIFACT_ID/zip" > promotion.zip
+          python3 - <<'PY'
+          import hashlib
+          import os
+          from pathlib import Path
+          import zipfile
+          data = Path("promotion.zip").read_bytes()
+          assert hashlib.sha256(data).hexdigest() == os.environ["ARTIFACT_DIGEST"].removeprefix("sha256:")
+          with zipfile.ZipFile("promotion.zip") as archive:
+              assert archive.namelist() == ["rc-promotion-manifest.json"]
+              assert archive.read("rc-promotion-manifest.json") == Path("fixtures/rc-promotion-manifest.json").read_bytes()
+          PY
+
   actions:
     name: Actions and workflows
     runs-on: ubuntu-latest
@@ -22,6 +91,12 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24.22.1"
+          package-manager-cache: false
 
       - name: Run pre-commit checks
         uses: pre-commit/action@2c7b3805fd2a0fd8c1884dcaebf91fc102a13ecd # v3.0.1

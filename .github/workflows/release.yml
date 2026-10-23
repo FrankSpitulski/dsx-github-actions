@@ -35,6 +35,12 @@ jobs:
           fetch-depth: 0  # Required for semantic-release
           token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24.22.1"
+          package-manager-cache: false
+
       - name: Semantic Release
         id: semantic
         uses: ./.github/actions/semantic-release
