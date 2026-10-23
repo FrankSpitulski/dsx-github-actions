@@ -42,6 +42,8 @@ jobs:
         run: node --test .github/actions/release-artifacts/tests/*.test.cjs
       - name: Test RC promotion and retry behavior
         run: python3 -m unittest discover -s .github/actions/promote-rc/tests -v
+      - name: Test Grype report aggregation and artifact layout
+        run: python3 -m unittest discover -s .github/actions/security-container-scan-aggregate/tests -v
       - name: Test the existing RC resolver
         run: .github/actions/resolve-release-candidate/test.sh
       - name: Prepare a separate local checkout for the resolver smoke test
