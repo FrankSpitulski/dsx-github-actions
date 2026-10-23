@@ -2,6 +2,13 @@
 
 Build (and optionally push) OCI images with Docker Buildx. Supports multi-arch builds and GitHub Actions cache (`type=gha`).
 
+The pinned Docker helper actions use the runner-provided Node.js 24 runtime.
+Updating their SHAs does not patch the runner's bundled Node.js or CA store.
+The build action retains `digest` and `imageid` outputs, single-platform `load`,
+the OCI layout exporter, and GHA cache forwarding. Build-record artifact uploads
+introduced after build-push v5 are disabled to preserve the existing artifact
+set; platform evidence uploads and the build summary remain enabled.
+
 ## Usage
 
 ### Build only (no push)

@@ -33,7 +33,7 @@ steps:
 | `config-file` | Path to commitlint config file. If empty, uses default discovery. | `false` | `''` |
 | `from` | Lint commits starting from this ref (exclusive). | `false` | `''` |
 | `to` | Lint commits up to this ref (inclusive). | `false` | `HEAD` |
-| `node-version` | Node.js version to use. | `false` | `20` |
+| `node-version` | Node.js version to use. | `false` | `24.22.1` |
 
 ## Behavior
 
@@ -50,3 +50,6 @@ steps:
 
 - The calling workflow must use `actions/checkout` with `fetch-depth: 0` (or at least enough depth to cover all commits in the PR) for commitlint to access the full commit range.
 - npm packages are installed with `--ignore-scripts` for supply chain safety.
+- The default toolchain is pinned to [Node.js `24.22.1`](https://nodejs.org/en/blog/release/v24.22.1), the minimum patched 24.x release for this remediation. The `node-version` override remains available; callers are responsible for selecting a patched release when overriding it.
+- Automatic npm caching is disabled because this action installs without a lockfile and does not need the caller's package cache.
+- This toolchain pin controls `node` and `npm` on `PATH`, not the Node.js binary bundled with the Actions runner. Updating action SHAs does not patch that binary or its CA bundle; runner updates remain a separate requirement.
