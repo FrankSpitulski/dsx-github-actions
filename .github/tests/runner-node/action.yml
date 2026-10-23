@@ -1,0 +1,8 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: Runner Node security check
+description: Check the actual Node binary used for JavaScript actions.
+runs:
+  using: node24
+  main: check.cjs

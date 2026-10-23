@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from pathlib import Path
+import json
 import unittest
 
 from test_promotion import charts
@@ -10,6 +11,28 @@ ROOT = Path(__file__).resolve().parents[3]
 
 
 class WorkflowTests(unittest.TestCase):
+    def test_node_setup_uses_the_security_patched_runtime(self):
+        configured = set()
+        for path in (ROOT / "workflows").glob("*.yml"):
+            workflow = charts.yaml_object(path.read_bytes())
+            for job in workflow.get("jobs", {}).values():
+                for step in job.get("steps", []):
+                    if step.get("uses", "").startswith("actions/setup-node@"):
+                        with self.subTest(workflow=path.name):
+                            self.assertEqual(step["with"]["node-version"], "24.22.1")
+                            self.assertIs(step["with"]["package-manager-cache"], False)
+                        configured.add(path.name)
+        self.assertTrue({"release.yml", "release-candidate.yml",
+                         "release-candidate-publish.yml", "release-candidate-checks.yml",
+                         "promote-rc.yml", "validate.yml"}.issubset(configured))
+        commitlint = charts.yaml_object((ROOT / "actions/commitlint/action.yml").read_bytes())
+        self.assertEqual(commitlint["inputs"]["node-version"]["default"], "24.22.1")
+        tests = ROOT / "actions/release-candidate/tests"
+        package = json.loads((tests / "package.json").read_text())
+        lock = json.loads((tests / "package-lock.json").read_text())
+        self.assertEqual(package["engines"], {"node": ">=24.22.1 <25"})
+        self.assertEqual(lock["packages"][""]["engines"], package["engines"])
+
     def test_only_manual_version_input_and_fixed_publishing_gate(self):
         workflow = charts.yaml_object((ROOT / "workflows/promote-rc.yml").read_bytes())
         self.assertEqual(set(workflow["on"]), {"workflow_call"})
