@@ -66,6 +66,11 @@ class ContainerSecurityPolicyTests(unittest.TestCase):
                      "TERRAFORM_VERSION", "TERRAGRUNT_VERSION", "REGCTL_VERSION"):
             self.assertIn(f"ARG {tool}=", dockerfile)
 
+    def test_alpine_uses_the_installed_package_version_constraint(self):
+        script = SMOKE.read_text()
+        self.assertIn("apk info --installed --verbose 'ca-certificates>=20261020-r0'", script)
+        self.assertNotIn("apk version -t", script)
+
     def test_immutable_release_version(self):
         self.assertEqual((CONTAINERS / "VERSION").read_text(), "0.1.0\n")
 

@@ -6,13 +6,8 @@ set -eu
 check_ca_certificates() {
     test -s /etc/ssl/certs/ca-certificates.crt
     if command -v apk >/dev/null 2>&1; then
-        installed="$(apk info -v ca-certificates | sed -n 's/^ca-certificates-\([^ ]*\).*$/\1/p')"
+        installed="$(apk info --installed --verbose 'ca-certificates>=20261020-r0')"
         test -n "$installed"
-        comparison="$(apk version -t "$installed" 20261020-r0)"
-        case "$comparison" in
-            '='|'>') ;;
-            *) echo "Alpine ca-certificates must be >= 20261020-r0 (found $installed)" >&2; exit 1 ;;
-        esac
     else
         case "$1" in
             go) minimum="20250419+deb13u1" ;;
