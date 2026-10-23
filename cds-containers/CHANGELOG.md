@@ -8,9 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.1.0] - 2026-10-23
 
 ### Changed
-- Upgrade both Go development images to Go 1.27.3 with verified official image digests for the upstream CA incident fix.
-- Upgrade Delve to v1.27.0 for Go 1.27 debugging support; retain golangci-lint's v1 CLI and configuration.
-- Build golangci-lint v1.64.8 with pinned x/tools v0.52.0 and Staticcheck tooling v0.8.2 for Go 1.27 support without migrating to v2.
+- Upgrade both Go development images to Go 1.26.10 with verified official image digests for the upstream CA incident fix.
+- Upgrade Delve to v1.27.0; retain golangci-lint's v1 CLI and configuration.
+- Build golangci-lint v1.64.8 with pinned x/tools v0.45.0 and existing Staticcheck tooling v0.6.1, verified together on Linux.
 - Pin the tools image to Node.js 24.22.1 from the existing signed NodeSource repository.
 - Require patched distribution CA packages and regenerate system trust stores in all three images.
 - Keep the existing public image names, Go development tools, CGO support, and tools-container feature set.

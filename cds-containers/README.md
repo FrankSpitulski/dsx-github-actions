@@ -27,13 +27,13 @@ Comprehensive tooling for infrastructure automation, CI/CD, and Kubernetes opera
 **Size**: ~500MB
 
 ### 2. `cds-go-dev-1.24-alpine` - Go Development (Alpine)
-Lightweight Go 1.27.3 development environment with essential tooling. The `1.24`
+Lightweight Go 1.26.10 development environment with essential tooling. The `1.24`
 image name is retained for compatibility; it no longer identifies the toolchain version.
 
 **Image**: `ghcr.io/dsx-ai-factory/dsx-cds-go-dev-1.24-alpine:0.1.0`
 
 **Includes**:
-- Go 1.27.3 (Alpine-based)
+- Go 1.26.10 (Alpine-based)
 - Air (hot reloading)
 - Delve (debugging)
 - golangci-lint
@@ -45,7 +45,7 @@ image name is retained for compatibility; it no longer identifies the toolchain 
 **Use when**: You need a minimal, fast container for Go development and CI.
 
 ### 3. `cds-go-dev-1.24-debian` - Go Development (Debian)
-Full-featured Go 1.27.3 environment with better C library compatibility. The public
+Full-featured Go 1.26.10 environment with better C library compatibility. The public
 image name is unchanged.
 
 **Image**: `ghcr.io/dsx-ai-factory/dsx-cds-go-dev-1.24-debian:0.1.0`
@@ -169,13 +169,13 @@ container:
 
 ### CA Incident Remediation (0.1.0)
 
-The legacy `go-dev-1.24-*` image names now contain **Go 1.27.3**, not Go 1.24.
+The legacy `go-dev-1.24-*` image names now contain **Go 1.26.10**, not Go 1.24.
 The toolchain upgrade uses a minor release, **0.1.0**, with unchanged public
-paths. Go 1.27.2 lacks the [upstream CA fix](https://groups.google.com/g/golang-announce/c/66pojueaQek).
+paths. Go 1.26.9 lacks the [upstream CA fix](https://groups.google.com/g/golang-announce/c/66pojueaQek).
 The tools image pins [Node 24.22.1](https://nodejs.org/en/blog/release/v24.22.1).
 Delve v1.27.0 supports this toolchain. golangci-lint stays on v1.64.8, built with
-pinned x/tools v0.52.0 and Staticcheck tooling v0.8.2 for Go 1.27 syntax and
-export data; v1 CLI/config remain unchanged.
+pinned x/tools v0.45.0 and the existing Staticcheck tooling v0.6.1. Linux
+compatibility tests selected this patched Go version to preserve v1 CLI/config.
 All images refresh distro-managed CA stores with patched package minimums:
 [Alpine](https://pkgs.alpinelinux.org/package/v3.24/main/x86_64/ca-certificates)
 `20261020-r0`, [Debian](https://tracker.debian.org/news/1813397/accepted-ca-certificates-20250419deb13u1-source-into-stable-security/)
@@ -385,7 +385,7 @@ jobs:
 ### Local Testing
 
 Stream the runtime checks into the exact built `linux/amd64` image. They assert
-Go 1.27.3 (including tool build metadata), Node 24 >= 24.22.1, distro CA versions,
+Go 1.26.10 (including tool build metadata), Node 24 >= 24.22.1, distro CA versions,
 existing tool commands, v1 lint CLI/config, debugging, compilation, and CGO:
 
 ```bash

@@ -13,9 +13,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-FROM golang:1.27.3-alpine@sha256:b8c9b82affbbb82a020bbcf998dad2ba9516944ac7e883524642a481a9505e9c
+FROM golang:1.26.10-alpine@sha256:27f2d3b83cfc5803c8078f8e730af0f7c431bf067afaec8f60a36fb763187cba
 
-RUN test "$(GOTOOLCHAIN=local go env GOVERSION)" = "go1.27.3"
+RUN test "$(GOTOOLCHAIN=local go env GOVERSION)" = "go1.26.10"
 
 # Set locale for proper terminal support
 ENV LANG=C.UTF-8
@@ -41,7 +41,7 @@ RUN go install github.com/air-verse/air@v1.62.0
 RUN go install github.com/go-delve/delve/cmd/dlv@v1.27.0
 
 # Install other useful development tools
-# Keep the v1 CLI/config while updating the Go 1.27 export-data reader.
+# Keep the v1 CLI/config with a compatible Go 1.26 export-data reader.
 COPY go-tools/golangci-lint/ /tmp/golangci-lint/
 RUN cd /tmp/golangci-lint \
     && go install -mod=readonly github.com/golangci/golangci-lint/cmd/golangci-lint \

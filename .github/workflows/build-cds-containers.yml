@@ -127,10 +127,10 @@ jobs:
             description: "CDS tools container with Bazel, Terraform, Helm, kubectl, NGC CLI, etc."
           - name: go-dev-1.24-alpine
             path: cds-containers/go-dev-1.24-alpine
-            description: "Go 1.27.3 development container (Alpine, legacy image name)"
+            description: "Go 1.26.10 development container (Alpine, legacy image name)"
           - name: go-dev-1.24-debian
             path: cds-containers/go-dev-1.24-debian
-            description: "Go 1.27.3 development container (Debian, legacy image name)"
+            description: "Go 1.26.10 development container (Debian, legacy image name)"
 
     steps:
       - name: Checkout code

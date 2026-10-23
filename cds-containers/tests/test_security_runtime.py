@@ -17,10 +17,10 @@ SMOKE = CONTAINERS / "tests/security-runtime.sh"
 class ContainerSecurityPolicyTests(unittest.TestCase):
     def test_go_bases_are_patched_and_digest_pinned(self):
         for directory, tag, digest in (
-            ("go-dev-1.24-alpine", "1.27.3-alpine",
-             "b8c9b82affbbb82a020bbcf998dad2ba9516944ac7e883524642a481a9505e9c"),
-            ("go-dev-1.24-debian", "1.27.3",
-             "f20d83a83e18dbd2a4714b8ffd4b30b287b6243962dd75608e86abcc63ba4efc"),
+            ("go-dev-1.24-alpine", "1.26.10-alpine",
+             "27f2d3b83cfc5803c8078f8e730af0f7c431bf067afaec8f60a36fb763187cba"),
+            ("go-dev-1.24-debian", "1.26.10",
+             "672c944cfd07599b5f1bb179869270cdc94c6254e41db4d431259693cb286b82"),
         ):
             with self.subTest(image=directory):
                 dockerfile = (CONTAINERS / directory / "Dockerfile").read_text()
@@ -37,8 +37,8 @@ class ContainerSecurityPolicyTests(unittest.TestCase):
     def test_linter_keeps_v1_with_go_export_data_compatibility(self):
         module = (CONTAINERS / "go-tools/golangci-lint/go.mod").read_text()
         self.assertIn("github.com/golangci/golangci-lint v1.64.8", module)
-        self.assertIn("golang.org/x/tools v0.52.0", module)
-        self.assertIn("honnef.co/go/tools v0.8.2", module)
+        self.assertIn("golang.org/x/tools v0.45.0", module)
+        self.assertIn("honnef.co/go/tools v0.6.1", module)
         self.assertNotIn("golangci-lint/v2", module)
         smoke = SMOKE.read_text()
         self.assertIn("--no-config --disable-all --enable=govet", smoke)
@@ -87,7 +87,7 @@ class ContainerSecurityPolicyTests(unittest.TestCase):
             r"export GOTOOLCHAIN=local\n(.*?)\n        check_ca_certificates go",
             SMOKE.read_text(), re.S)
         self.assertIsNotNone(match)
-        for version in ("go1.24.3", "go1.27.2", "go1.26.10", "go1.27.3"):
+        for version in ("go1.24.3", "go1.26.9", "go1.27.3", "go1.26.10"):
             with self.subTest(version=version):
                 script = (
                     'set -eu\ngo() { test "$GOTOOLCHAIN" = local; '
@@ -95,7 +95,7 @@ class ContainerSecurityPolicyTests(unittest.TestCase):
                     'export GOTOOLCHAIN=local\n' + match.group(1)
                 )
                 result = subprocess.run(["sh", "-c", script], capture_output=True)
-                self.assertEqual(result.returncode == 0, version == "go1.27.3")
+                self.assertEqual(result.returncode == 0, version == "go1.26.10")
 
     @unittest.skipUnless(shutil.which("node"), "Node is required for runtime-guard tests")
     def test_node_guard_rejects_unpatched_or_wrong_major_versions(self):

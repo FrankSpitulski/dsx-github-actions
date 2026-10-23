@@ -24,7 +24,7 @@ case "${1:-}" in
         # Ignore auto-downloads: test the toolchain that is actually in the image.
         export GOTOOLCHAIN=local
         go version
-        test "$(go env GOVERSION)" = "go1.27.3"
+        test "$(go env GOVERSION)" = "go1.26.10"
         check_ca_certificates go
         test "$(go env CGO_ENABLED)" = "1"
         air -v
@@ -32,7 +32,7 @@ case "${1:-}" in
         golangci-lint --version
         swag --version
         for tool in air dlv golangci-lint goimports swag; do
-            go version -m "$(command -v "$tool")" | sed -n '1p' | grep 'go1\.27\.3$'
+            go version -m "$(command -v "$tool")" | sed -n '1p' | grep 'go1\.26\.10$'
         done
 
         workdir="$(mktemp -d)"
@@ -50,7 +50,7 @@ GO
         go build '-gcflags=all=-N -l' -o debughello hello.go
         printf 'continue\nexit\n' > dlv.init
         dlv exec --allow-non-terminal-interactive --init dlv.init ./debughello
-        printf 'module cds-container-smoke\n\ngo 1.27.3\n' > go.mod
+        printf 'module cds-container-smoke\n\ngo 1.26.10\n' > go.mod
         cat > .golangci.yml <<'YAML'
 linters:
   disable-all: true
