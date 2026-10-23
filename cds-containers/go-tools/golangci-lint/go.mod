@@ -3,11 +3,11 @@
 
 module cds-golangci-lint-compat
 
-go 1.27.3
+go 1.26.10
 
 require (
 	github.com/golangci/golangci-lint v1.64.8
-	golang.org/x/tools v0.52.0
-	// Go 1.27 syntax and export-data support for staticcheck and unused.
-	honnef.co/go/tools v0.8.2
+	golang.org/x/tools v0.45.0
+	// Preserve the v1 analyzer API with the patched Go 1.26 toolchain.
+	honnef.co/go/tools v0.6.1
 )
