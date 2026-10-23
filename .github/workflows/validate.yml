@@ -26,6 +26,8 @@ jobs:
         with:
           persist-credentials: false
       - name: Verify the runner-bundled JavaScript runtime
+        id: runner-node
+        continue-on-error: true
         uses: ./.github/tests/runner-node
       - name: Prepare artifact fixtures
         run: |
@@ -81,6 +83,11 @@ jobs:
               assert archive.namelist() == ["rc-promotion-manifest.json"]
               assert archive.read("rc-promotion-manifest.json") == Path("fixtures/rc-promotion-manifest.json").read_bytes()
           PY
+      - name: Require the runner security check after compatibility tests
+        if: always()
+        env:
+          RUNTIME_RESULT: ${{ steps.runner-node.outcome }}
+        run: test "$RUNTIME_RESULT" = success
 
   actions:
     name: Actions and workflows
