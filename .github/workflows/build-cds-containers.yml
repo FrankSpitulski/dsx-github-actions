@@ -108,6 +108,9 @@ jobs:
           echo "publish=$publish" >> "$GITHUB_OUTPUT"
           echo "Container version: $version (publish: $publish)"
 
+      - name: Test container runtime policy
+        run: python3 -B -m unittest discover -s cds-containers/tests -v
+
   build-and-test-images:
     runs-on: linux-amd64-cpu4
     timeout-minutes: 45
@@ -124,10 +127,10 @@ jobs:
             description: "CDS tools container with Bazel, Terraform, Helm, kubectl, NGC CLI, etc."
           - name: go-dev-1.24-alpine
             path: cds-containers/go-dev-1.24-alpine
-            description: "Go 1.24 development container (Alpine-based, minimal size)"
+            description: "Go 1.26.10 development container (Alpine, legacy image name)"
           - name: go-dev-1.24-debian
             path: cds-containers/go-dev-1.24-debian
-            description: "Go 1.24 development container (Debian-based, better compatibility)"
+            description: "Go 1.26.10 development container (Debian, legacy image name)"
 
     steps:
       - name: Checkout code
@@ -185,41 +188,14 @@ jobs:
         env:
           IMAGE: ${{ steps.test-image.outputs.image }}
         run: |
-          docker run --rm -i "$IMAGE" sh -ec '
-            go version
-            golangci-lint --version
-            workdir="$(mktemp -d)"
-            cd "$workdir"
-            cat > hello.go
-            goimports -w hello.go
-            go build hello.go
-            ./hello
-          ' <<'EOF'
-          package main
-          func main() {
-              fmt.Println("Hello from the CDS Go container")
-          }
-          EOF
+          docker run --rm -i "$IMAGE" sh -s -- go < cds-containers/tests/security-runtime.sh
 
       - name: Test tools image
         if: matrix.image.name == 'tools'
         env:
           IMAGE: ${{ steps.test-image.outputs.image }}
         run: |
-          docker run --rm "$IMAGE" sh -ec '
-            bazel --version
-            bazel6 --version
-            bazel8 --version
-            kubectl version --client
-            helm version --short
-            terraform version
-            terragrunt --version
-            ngc version
-            yq --version
-            node --version
-            python3 --version
-            uv --version
-          '
+          docker run --rm -i "$IMAGE" sh -s -- tools < cds-containers/tests/security-runtime.sh
 
       - name: Record tested digest and evidence ID
         if: needs.get-version.outputs.publish == 'true'

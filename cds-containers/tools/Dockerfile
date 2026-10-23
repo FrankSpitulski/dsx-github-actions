@@ -31,6 +31,8 @@ RUN apt-get update \
         python3-dev \
         software-properties-common \
         unzip \
+    && dpkg --compare-versions "$(dpkg-query -W -f='${Version}' ca-certificates)" ge "20260816ubuntu0.22.04.1" \
+    && update-ca-certificates \
     && apt-get autoremove \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
@@ -38,14 +40,18 @@ RUN apt-get update \
 # Install Node.js 24 LTS from the signed NodeSource repository. Pin the signing
 # key identity instead of executing the remote setup script.
 ARG NODESOURCE_GPG_FINGERPRINT="6F71F525282841EEDAF851B42F59B5F99B1BE0B4"
+ARG NODEJS_VERSION="24.22.1-1nodesource1"
 RUN curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key -o /tmp/nodesource-repo.gpg.key \
     && test "$(gpg --batch --show-keys --with-colons /tmp/nodesource-repo.gpg.key | awk -F: '$1 == "fpr" { print $10; exit }')" = "$NODESOURCE_GPG_FINGERPRINT" \
     && gpg --batch --yes --dearmor -o /usr/share/keyrings/nodesource.gpg /tmp/nodesource-repo.gpg.key \
     && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/nodesource.gpg] https://deb.nodesource.com/node_24.x nodistro main" > /etc/apt/sources.list.d/nodesource.list \
     && rm /tmp/nodesource-repo.gpg.key \
     && apt-get update \
-    && apt-get install --no-install-recommends -y nodejs \
+    && apt-get install --no-install-recommends -y "nodejs=${NODEJS_VERSION}" \
     && rm -rf /var/lib/apt/lists/* \
+    && test "$(node --version)" = "v${NODEJS_VERSION%%-*}" \
+    && dpkg --compare-versions "$(node --version | cut -c2-)" ge "24.22.1" \
+    && test "$(node -p 'process.versions.node.split(".")[0]')" = "24" \
     && node --version \
     && npm --version
 
