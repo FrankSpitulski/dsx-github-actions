@@ -38,6 +38,7 @@ class ContainerSecurityPolicyTests(unittest.TestCase):
         module = (CONTAINERS / "go-tools/golangci-lint/go.mod").read_text()
         self.assertIn("github.com/golangci/golangci-lint v1.64.8", module)
         self.assertIn("golang.org/x/tools v0.52.0", module)
+        self.assertIn("honnef.co/go/tools v0.8.2", module)
         self.assertNotIn("golangci-lint/v2", module)
         smoke = SMOKE.read_text()
         self.assertIn("--no-config --disable-all --enable=govet", smoke)
