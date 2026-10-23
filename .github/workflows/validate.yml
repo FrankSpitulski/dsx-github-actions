@@ -16,6 +16,7 @@ permissions:
 jobs:
   runtime-and-artifacts:
     name: Runtime and artifact compatibility
+    if: github.event_name == 'workflow_dispatch'
     runs-on: linux-amd64-cpu4
     timeout-minutes: 10
     permissions:

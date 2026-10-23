@@ -12,6 +12,10 @@ Runner owners must also update those binaries and the host CA packages. Runner
 24.22.1. The older minimum runner version for Node 24 compatibility is not
 sufficient evidence of the CA fix.
 
+This applies to every caller-selected runner, not only the validation pool.
+The manual Validate canary checks the actual runner binary and artifact
+compatibility; it does not update or certify other runner pools.
+
 Product repositories pinned to an older shared-actions SHA need a pin update.
 Rebuild their artifacts with the patched toolchain; existing binaries do not
 change when the shared actions are updated.
