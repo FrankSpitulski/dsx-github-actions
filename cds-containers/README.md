@@ -174,7 +174,8 @@ The toolchain upgrade uses a minor release, **0.1.0**, with unchanged public
 paths. Go 1.27.2 lacks the [upstream CA fix](https://groups.google.com/g/golang-announce/c/66pojueaQek).
 The tools image pins [Node 24.22.1](https://nodejs.org/en/blog/release/v24.22.1).
 Delve v1.27.0 supports this toolchain. golangci-lint stays on v1.64.8, built with
-pinned x/tools v0.52.0 for Go 1.27 export data; v1 CLI/config remain unchanged.
+pinned x/tools v0.52.0 and Staticcheck tooling v0.8.2 for Go 1.27 syntax and
+export data; v1 CLI/config remain unchanged.
 All images refresh distro-managed CA stores with patched package minimums:
 [Alpine](https://pkgs.alpinelinux.org/package/v3.24/main/x86_64/ca-certificates)
 `20261020-r0`, [Debian](https://tracker.debian.org/news/1813397/accepted-ca-certificates-20250419deb13u1-source-into-stable-security/)
