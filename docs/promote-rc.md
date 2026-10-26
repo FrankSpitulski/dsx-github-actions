@@ -133,7 +133,7 @@ Before activation, repository administrators must configure:
   `RC_PROMOTION_APP_ID` and secret `RC_PROMOTION_APP_PRIVATE_KEY`; do not place
   that private key in repository or organization secrets. The pinned official
   token action requests only those permissions for the current repository and
-  revokes its short-lived installation token when the job ends. No PAT fallback.
+  revokes its short-lived installation token when the job ends.
 - Existing destination chart repositories, immutable stable-version policy, and
   registry access from the runner. Promotion does not create chart repositories
   or modify registry permissions.
@@ -144,12 +144,22 @@ Before activation, repository administrators must configure:
 GitHub requires Workflows write permission when a release's target commit changes
 workflow files relative to the default branch; `GITHUB_TOKEN` cannot receive that
 permission ([GitHub release API](https://docs.github.com/en/rest/releases/releases#create-a-release)).
-The App token is used only for release/ref writes, release-asset uploads, and
+The release token is used only for release/ref writes, release-asset uploads, and
 destination draft-release/intent reads needed for retries. GitHub limits draft
 release visibility to push-capable identities. Source evidence, protection checks,
 and checkout keep the normal read-only workflow token. The App token is not passed
 to registry tools or checked-out product code; no RC code is executed by promotion.
-Missing App credentials stop before writes.
+Missing selected credentials stop before writes.
+
+For a temporary PAT setup, set environment variable `RC_PROMOTION_AUTH_MODE` to
+`pat` and environment secret `RC_PROMOTION_PAT`. Use an expiring, repository-scoped
+PAT with Contents and Workflows write permissions. The approval gate stays the
+same. This mode must be selected explicitly; failed App authentication never
+falls back to a PAT. Only the selected credential is used for release writes.
+Do not place the PAT in repository or organization secrets. To return to App
+authentication, configure the App credentials, set the mode to `app`, and remove
+the PAT secret. Revoke a dedicated temporary PAT when it is no longer needed.
+Unset mode defaults to `app`; any other mode is rejected.
 
 One repository variable, `DSX_RELEASE_MODE`, coordinates the cutover. Unset or
 any value other than `rc-promotion` preserves legacy publishing. Every job in an
