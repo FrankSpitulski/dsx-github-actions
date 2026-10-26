@@ -6,8 +6,9 @@ It does not build images or resolve chart dependencies.
 
 ## Product configuration
 
-Add this caller to the product's protected default branch. Pin both shared
-workflows to the same reviewed full commit SHA.
+Add this caller to the product's protected default branch. Pin each shared
+workflow to a reviewed full commit SHA. A compatible promoter update can use
+a newer revision without rebuilding the selected RC.
 
 ```yaml
 name: Promote RC
@@ -66,8 +67,8 @@ destination, even for disabled templates or values embedded in strings.
 Missing repositories and other version-value mapping shapes are unsupported and
 rejected before any publishing.
 
-Set `source_publisher_sha` to the reviewed full commit SHA pinned by the product's
-RC caller. The selected Actions attempt must reference
+Set `source_publisher_sha` to the approved full commit SHA used to publish the
+selected RC. Keep this value when updating only the promoter. The selected Actions attempt must reference
 `dsx-ai-factory/dsx-github-actions/.github/workflows/release-candidate-publish.yml`
 at exactly that immutable SHA. Missing provenance, mutable refs, different
 repositories, and different publisher revisions are rejected. The helper fetches
@@ -124,6 +125,9 @@ Before activation, repository administrators must configure:
 - Environment-only secrets `RC_PROMOTION_SOURCE_NGC_KEY` and
   `RC_PROMOTION_DESTINATION_NGC_KEY`. Use source read and destination publish
   permissions. Do not create repository or organization secrets with these names.
+  Reads select credentials by source or destination role, even when the NGC paths
+  are identical. The destination key must also read destination images and charts
+  for conflict detection and post-publication verification.
 - A GitHub App installed only on the product repository with Contents and
   Workflows write permissions. In `stable-release`, set variable
   `RC_PROMOTION_APP_ID` and secret `RC_PROMOTION_APP_PRIVATE_KEY`; do not place
