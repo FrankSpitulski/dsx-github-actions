@@ -155,7 +155,7 @@ class GitHub:
 
     def write_environment(self):
         require(isinstance(self.write_token, str) and bool(self.write_token.strip()),
-                "the environment-scoped GitHub App release token is missing")
+                "the environment-scoped release token is missing")
         return {**os.environ, "GH_TOKEN": self.write_token}
 
     def request(self, path, method="GET", data=None, absent=False, binary=False):

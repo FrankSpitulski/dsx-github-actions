@@ -54,6 +54,16 @@ jobs:
       actions: read
       deployments: read
     steps:
+      - name: Select release authentication
+        id: release-auth
+        env:
+          AUTH_MODE: ${{ vars.RC_PROMOTION_AUTH_MODE || 'app' }}
+        run: |
+          set -euo pipefail
+          case "$AUTH_MODE" in
+            app|pat) echo "mode=$AUTH_MODE" >> "$GITHUB_OUTPUT" ;;
+            *) echo "RC_PROMOTION_AUTH_MODE must be app or pat" >&2; exit 1 ;;
+          esac
       - name: Select temporary registry credential paths
         run: |
           {
@@ -89,6 +99,7 @@ jobs:
           bash dsx-promotion-tools/.github/actions/helm-shared/scripts/install-ngc.sh
       - name: Create the repository-scoped release token
         id: release-token
+        if: steps.release-auth.outputs.mode == 'app'
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
           app-id: ${{ vars.RC_PROMOTION_APP_ID }}
@@ -102,12 +113,18 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RC_PROMOTION_GITHUB_TOKEN: ${{ steps.release-token.outputs.token }}
+          RC_PROMOTION_AUTH_MODE: ${{ steps.release-auth.outputs.mode }}
+          RC_PROMOTION_PAT: ${{ steps.release-auth.outputs.mode == 'pat' && secrets.RC_PROMOTION_PAT || '' }}
           RC_VERSION: ${{ inputs.rc_version }}
           DSX_RELEASE_MODE: ${{ needs.admission.outputs.release-mode }}
           RC_PROMOTION_SOURCE_NGC_KEY: ${{ secrets.RC_PROMOTION_SOURCE_NGC_KEY }}
           RC_PROMOTION_DESTINATION_NGC_KEY: ${{ secrets.RC_PROMOTION_DESTINATION_NGC_KEY }}
         run: |
           set +x
+          if [[ "$RC_PROMOTION_AUTH_MODE" == pat ]]; then
+            export RC_PROMOTION_GITHUB_TOKEN="$RC_PROMOTION_PAT"
+          fi
+          unset RC_PROMOTION_PAT
           python3 dsx-promotion-tools/.github/actions/promote-rc/promotion.py promote \
             --policy promotion-source/.github/rc-promotion.json
       - name: Preserve the promotion result

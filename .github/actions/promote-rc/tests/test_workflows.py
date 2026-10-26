@@ -3,6 +3,9 @@
 
 from pathlib import Path
 import json
+import subprocess
+import sys
+import tempfile
 import unittest
 
 from test_promotion import charts
@@ -64,10 +67,108 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(step["env"]["RC_PROMOTION_GITHUB_TOKEN"], "${{ steps.release-token.outputs.token }}")
         self.assertEqual(step["env"]["DSX_RELEASE_MODE"], "${{ needs.admission.outputs.release-mode }}")
 
+    def test_release_auth_defaults_to_app_and_accepts_explicit_pat_before_tools(self):
+        workflow = charts.yaml_object((ROOT / "workflows/promote-rc.yml").read_bytes())
+        select = workflow["jobs"]["promote"]["steps"][0]
+        self.assertEqual(select["id"], "release-auth")
+        self.assertEqual(select["env"], {
+            "AUTH_MODE": "${{ vars.RC_PROMOTION_AUTH_MODE || 'app' }}",
+        })
+        self.assertNotIn("if", select)
+        self.assertNotIn("continue-on-error", select)
+        for mode in ("app", "pat"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
+                output = Path(directory) / "output"
+                result = subprocess.run(
+                    ["/bin/bash", "--noprofile", "--norc", "-e", "-o", "pipefail", "-c", select["run"]],
+                    cwd=directory, env={"AUTH_MODE": mode, "GITHUB_OUTPUT": str(output),
+                                        "PATH": directory},
+                    capture_output=True, text=True, timeout=10,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(output.read_text(), f"mode={mode}\n")
+
+    def test_invalid_auth_mode_fails_without_emitting_a_mode(self):
+        workflow = charts.yaml_object((ROOT / "workflows/promote-rc.yml").read_bytes())
+        select = workflow["jobs"]["promote"]["steps"][0]
+        for mode in ("", "APP", "PAT", "auto", " app", "pat ", "app\npat", "app; echo pat"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
+                output = Path(directory) / "output"
+                output.touch()
+                result = subprocess.run(
+                    ["/bin/bash", "--noprofile", "--norc", "-e", "-o", "pipefail", "-c", select["run"]],
+                    cwd=directory, env={"AUTH_MODE": mode, "GITHUB_OUTPUT": str(output),
+                                        "PATH": directory},
+                    capture_output=True, text=True, timeout=10,
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(output.read_text(), "")
+
+    def test_pat_is_injected_only_into_explicit_pat_promotion(self):
+        workflow = charts.yaml_object((ROOT / "workflows/promote-rc.yml").read_bytes())
+        step = next(step for step in workflow["jobs"]["promote"]["steps"]
+                    if step.get("name") == "Verify and promote the selected RC")
+        self.assertEqual(step["env"]["RC_PROMOTION_AUTH_MODE"], "${{ steps.release-auth.outputs.mode }}")
+        self.assertEqual(step["env"]["RC_PROMOTION_PAT"],
+                         "${{ steps.release-auth.outputs.mode == 'pat' && secrets.RC_PROMOTION_PAT || '' }}")
+        self.assertEqual(json.dumps(workflow).count("secrets.RC_PROMOTION_PAT"), 1)
+        self.assertNotIn("if", step)
+        self.assertNotIn("continue-on-error", step)
+
+    def test_verify_shell_selects_only_explicit_pat_and_removes_credential_alias(self):
+        workflow = charts.yaml_object((ROOT / "workflows/promote-rc.yml").read_bytes())
+        step = next(step for step in workflow["jobs"]["promote"]["steps"]
+                    if step.get("name") == "Verify and promote the selected RC")
+        cases = [
+            ("app", "test-app-token", "", "test-app-token"),
+            ("app", "test-app-token", "test-pat-token", "test-app-token"),
+            ("pat", "", "test-pat-token", "test-pat-token"),
+            ("pat", "test-app-token", "test-pat-token", "test-pat-token"),
+            ("app", "", "test-pat-token", ""),
+            ("pat", "test-app-token", "", ""),
+        ]
+        for mode, app_token, pat_token, selected in cases:
+            with self.subTest(mode=mode, app=bool(app_token), pat=bool(pat_token)), \
+                    tempfile.TemporaryDirectory() as directory:
+                # An isolated PATH can only execute this stub, never a live promotion tool.
+                python = Path(directory) / "python3"
+                python.write_text(
+                    f"#!{sys.executable}\n"
+                    "import json, os, sys\n"
+                    "from pathlib import Path\n"
+                    "keys = ('GH_TOKEN', 'RC_PROMOTION_GITHUB_TOKEN', 'RC_PROMOTION_PAT')\n"
+                    "Path('python-env.json').write_text(json.dumps({\n"
+                    "    'argv': sys.argv[1:],\n"
+                    "    'env': {key: os.environ[key] for key in keys if key in os.environ},\n"
+                    "}))\n"
+                )
+                python.chmod(0o700)
+                result = subprocess.run(
+                    ["/bin/bash", "--noprofile", "--norc", "-ex", "-o", "pipefail", "-c", step["run"]],
+                    cwd=directory, env={
+                        "PATH": directory, "GH_TOKEN": "test-workflow-token",
+                        "RC_PROMOTION_AUTH_MODE": mode, "RC_PROMOTION_GITHUB_TOKEN": app_token,
+                        "RC_PROMOTION_PAT": pat_token,
+                    }, capture_output=True, text=True, timeout=10,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                observed = json.loads((Path(directory) / "python-env.json").read_text())
+                self.assertEqual(observed["argv"], [
+                    "dsx-promotion-tools/.github/actions/promote-rc/promotion.py", "promote",
+                    "--policy", "promotion-source/.github/rc-promotion.json",
+                ])
+                self.assertEqual(observed["env"], {
+                    "GH_TOKEN": "test-workflow-token", "RC_PROMOTION_GITHUB_TOKEN": selected,
+                })
+                for token in ("test-app-token", "test-pat-token", "test-workflow-token"):
+                    self.assertNotIn(token, result.stdout + result.stderr)
+
     def test_app_token_is_environment_scoped_repository_restricted_and_revoked(self):
         workflow = charts.yaml_object((ROOT / "workflows/promote-rc.yml").read_bytes())
         steps = workflow["jobs"]["promote"]["steps"]
         mint = next(step for step in steps if step.get("id") == "release-token")
+        self.assertEqual(mint["if"], "steps.release-auth.outputs.mode == 'app'")
+        self.assertNotIn("continue-on-error", mint)
         self.assertEqual(mint["uses"],
                          "actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510")
         self.assertEqual(mint["with"], {
