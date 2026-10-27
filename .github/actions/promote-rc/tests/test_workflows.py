@@ -40,8 +40,14 @@ class WorkflowTests(unittest.TestCase):
         workflow = charts.yaml_object((ROOT / "workflows/promote-rc.yml").read_bytes())
         self.assertEqual(set(workflow["on"]), {"workflow_call"})
         call = workflow["on"]["workflow_call"]
-        self.assertEqual(set(call), {"inputs"})
+        self.assertEqual(set(call), {"inputs", "secrets"})
         self.assertEqual(set(call["inputs"]), {"rc_version"})
+        self.assertEqual({name: settings["required"] for name, settings in call["secrets"].items()}, {
+            "RC_PROMOTION_APP_PRIVATE_KEY": False,
+            "RC_PROMOTION_PAT": False,
+            "RC_PROMOTION_SOURCE_NGC_KEY": True,
+            "RC_PROMOTION_DESTINATION_NGC_KEY": True,
+        })
         self.assertEqual(workflow["concurrency"], {
             "group": "dsx-stable-release-${{ github.repository }}", "cancel-in-progress": False,
         })
@@ -104,14 +110,66 @@ class WorkflowTests(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertEqual(output.read_text(), "")
 
-    def test_pat_is_injected_only_into_explicit_pat_promotion(self):
+    def test_selected_credentials_are_checked_before_tools(self):
+        workflow = charts.yaml_object((ROOT / "workflows/promote-rc.yml").read_bytes())
+        check = workflow["jobs"]["promote"]["steps"][1]
+        self.assertEqual(check["name"], "Check selected promotion credentials")
+        self.assertNotIn("if", check)
+        self.assertNotIn("continue-on-error", check)
+        self.assertEqual(check["env"], {
+            "AUTH_MODE": "${{ steps.release-auth.outputs.mode }}",
+            "RC_PROMOTION_APP_ID": "${{ vars.RC_PROMOTION_APP_ID }}",
+            "RC_PROMOTION_APP_PRIVATE_KEY": "${{ steps.release-auth.outputs.mode == 'app' && secrets.RC_PROMOTION_APP_PRIVATE_KEY || '' }}",
+            "RC_PROMOTION_PAT": "${{ steps.release-auth.outputs.mode == 'pat' && secrets.RC_PROMOTION_PAT || '' }}",
+            "RC_PROMOTION_SOURCE_NGC_KEY": "${{ secrets.RC_PROMOTION_SOURCE_NGC_KEY }}",
+            "RC_PROMOTION_DESTINATION_NGC_KEY": "${{ secrets.RC_PROMOTION_DESTINATION_NGC_KEY }}",
+        })
+        registry = {
+            "RC_PROMOTION_SOURCE_NGC_KEY": "test-source-key",
+            "RC_PROMOTION_DESTINATION_NGC_KEY": "test-destination-key",
+        }
+        credentials = {
+            "app": {**registry, "RC_PROMOTION_APP_ID": "12345",
+                    "RC_PROMOTION_APP_PRIVATE_KEY": "test-private-key\nsecond-line"},
+            "pat": {**registry, "RC_PROMOTION_PAT": "test-pat-token"},
+        }
+        for mode, selected in credentials.items():
+            for missing in (None, *selected):
+                for absent in (False, True):
+                    with self.subTest(mode=mode, missing=missing, absent=absent), \
+                            tempfile.TemporaryDirectory() as directory:
+                        env = {"PATH": directory, "AUTH_MODE": mode, **selected}
+                        # An unselected credential must never rescue a missing selected one.
+                        if mode == "app":
+                            env["RC_PROMOTION_PAT"] = "test-unselected-pat"
+                        else:
+                            env["RC_PROMOTION_APP_PRIVATE_KEY"] = "test-unselected-key"
+                        if missing:
+                            if absent:
+                                del env[missing]
+                            else:
+                                env[missing] = ""
+                        result = subprocess.run(
+                            ["/bin/bash", "--noprofile", "--norc", "-ex", "-o", "pipefail", "-c", check["run"]],
+                            cwd=directory, env=env, capture_output=True, text=True, timeout=10,
+                        )
+                        if missing:
+                            self.assertNotEqual(result.returncode, 0)
+                            self.assertIn(f"Missing {missing}.", result.stderr)
+                            self.assertIn("caller's explicit secret mappings", result.stderr)
+                        else:
+                            self.assertEqual(result.returncode, 0, result.stderr)
+                        for value in (*selected.values(), "test-unselected-pat", "test-unselected-key"):
+                            self.assertNotIn(value, result.stdout + result.stderr)
+
+    def test_pat_is_injected_only_into_explicit_pat_checks_and_promotion(self):
         workflow = charts.yaml_object((ROOT / "workflows/promote-rc.yml").read_bytes())
         step = next(step for step in workflow["jobs"]["promote"]["steps"]
                     if step.get("name") == "Verify and promote the selected RC")
         self.assertEqual(step["env"]["RC_PROMOTION_AUTH_MODE"], "${{ steps.release-auth.outputs.mode }}")
         self.assertEqual(step["env"]["RC_PROMOTION_PAT"],
                          "${{ steps.release-auth.outputs.mode == 'pat' && secrets.RC_PROMOTION_PAT || '' }}")
-        self.assertEqual(json.dumps(workflow).count("secrets.RC_PROMOTION_PAT"), 1)
+        self.assertEqual(json.dumps(workflow).count("secrets.RC_PROMOTION_PAT"), 2)
         self.assertNotIn("if", step)
         self.assertNotIn("continue-on-error", step)
 

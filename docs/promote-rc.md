@@ -30,10 +30,18 @@ jobs:
       deployments: read
     with:
       rc_version: ${{ inputs.rc_version }}
+    secrets:
+      RC_PROMOTION_APP_PRIVATE_KEY: ${{ secrets.RC_PROMOTION_APP_PRIVATE_KEY }}
+      RC_PROMOTION_SOURCE_NGC_KEY: ${{ secrets.RC_PROMOTION_SOURCE_NGC_KEY }}
+      RC_PROMOTION_DESTINATION_NGC_KEY: ${{ secrets.RC_PROMOTION_DESTINATION_NGC_KEY }}
 ```
 
-Do not pass secrets, add `secrets: inherit`, or add concurrency to this caller.
-The shared workflow owns the publishing environment and stable-release lock.
+Keep these secrets only in `stable-release`. GitHub requires the caller to
+[forward environment secrets explicitly](https://docs.github.com/en/actions/how-tos/reuse-automations/reuse-workflows#using-inputs-and-secrets-in-a-reusable-workflow),
+even when they exist only in that environment. The shared job receives them after
+approval and checks for missing values before installing tools.
+Do not use `secrets: inherit` or add caller concurrency. The shared workflow owns
+the publishing environment and stable-release lock.
 
 Add `.github/rc-promotion.json` on the protected default branch. Keep `enabled`
 false until the rollout review.
@@ -152,13 +160,16 @@ to registry tools or checked-out product code; no RC code is executed by promoti
 Missing selected credentials stop before writes.
 
 For a temporary PAT setup, set environment variable `RC_PROMOTION_AUTH_MODE` to
-`pat` and environment secret `RC_PROMOTION_PAT`. Use an expiring, repository-scoped
+`pat` and environment secret `RC_PROMOTION_PAT`. Replace the App private-key
+mapping in the caller with `RC_PROMOTION_PAT: ${{ secrets.RC_PROMOTION_PAT }}`.
+Use an expiring, repository-scoped
 PAT with Contents and Workflows write permissions. The approval gate stays the
 same. This mode must be selected explicitly; failed App authentication never
 falls back to a PAT. Only the selected credential is used for release writes.
 Do not place the PAT in repository or organization secrets. To return to App
-authentication, configure the App credentials, set the mode to `app`, and remove
-the PAT secret. Revoke a dedicated temporary PAT when it is no longer needed.
+authentication, configure the App credentials and caller mapping, set the mode to
+`app`, and remove the PAT secret. Revoke a dedicated temporary PAT when it is no
+longer needed.
 Unset mode defaults to `app`; any other mode is rejected.
 
 One repository variable, `DSX_RELEASE_MODE`, coordinates the cutover. Unset or
