@@ -5,6 +5,13 @@ All notable changes to CDS Containers will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-10-28
+
+### Changed
+- Update the tools image to uv 0.13.5, and system Python to pip 26.2.2 and certifi 2026.10.23, for the CA incident fix.
+- Update Bazel 8.4.0 to 8.8.2 (`bazel8`, default `bazel`), whose bundled JDK no longer trusts the eMudhra roots.
+- Retain Bazel 6.5.0 (`bazel6`); install `ca-certificates-java` and add a system bazelrc so both Bazel JVMs use the maintained system Java trust store.
+
 ## [0.1.0] - 2026-10-23
 
 ### Changed
