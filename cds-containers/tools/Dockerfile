@@ -159,13 +159,13 @@ RUN curl -fsSL -o /usr/local/bin/bazel-${BAZEL6_VERSION} "https://github.com/baz
     && ln -s /usr/local/bin/bazel-${BAZEL6_VERSION} /usr/local/bin/bazel6 \
     && bazel6 --version
 
-# Bazel 9.3.1 is the default and includes a patched bundled JDK trust store.
-ARG BAZEL9_VERSION="9.3.1"
-RUN curl -fsSL -o /usr/local/bin/bazel-${BAZEL9_VERSION} "https://github.com/bazelbuild/bazel/releases/download/${BAZEL9_VERSION}/bazel-${BAZEL9_VERSION}-linux-x86_64" \
-    && chmod +x /usr/local/bin/bazel-${BAZEL9_VERSION} \
-    && ln -s /usr/local/bin/bazel-${BAZEL9_VERSION} /usr/local/bin/bazel9 \
-    && ln -s /usr/local/bin/bazel9 /usr/local/bin/bazel \
-    && bazel9 --version \
+# Bazel 8.8.2 is the default and includes a patched bundled JDK trust store.
+ARG BAZEL8_VERSION="8.8.2"
+RUN curl -fsSL -o /usr/local/bin/bazel-${BAZEL8_VERSION} "https://github.com/bazelbuild/bazel/releases/download/${BAZEL8_VERSION}/bazel-${BAZEL8_VERSION}-linux-x86_64" \
+    && chmod +x /usr/local/bin/bazel-${BAZEL8_VERSION} \
+    && ln -s /usr/local/bin/bazel-${BAZEL8_VERSION} /usr/local/bin/bazel8 \
+    && ln -s /usr/local/bin/bazel8 /usr/local/bin/bazel \
+    && bazel8 --version \
     && bazel --version
 
 # Note: CDS CLI is not included as GitHub runners cannot reach internal GitLab

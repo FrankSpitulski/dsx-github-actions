@@ -16,8 +16,8 @@ Comprehensive tooling for infrastructure automation, CI/CD, and Kubernetes opera
 **Includes**:
 - **Bazel** (multiple versions):
   - `bazel6` - Bazel 6.5.0 (for KubeVirt compatibility)
-  - `bazel9` - Bazel 9.3.1
-  - `bazel` - Default symlink (→ bazel9)
+  - `bazel8` - Bazel 8.8.2
+  - `bazel` - Default symlink (→ bazel8)
 - **Kubernetes**: kubectl, kubelogin, helm
 - **Infrastructure**: terraform, terragrunt
 - **NVIDIA**: NGC CLI
@@ -186,10 +186,10 @@ All images refresh distro-managed CA stores with patched package minimums:
 
 The tools image updates uv to 0.13.5, system Python pip to 26.2.2, and certifi to
 2026.10.23. Upgrading uv alone does not update Ubuntu's Python packages.
-Bazel 9.3.1 includes the upstream Java CA fix. Bazel 6.5.0 remains available for
-compatibility; `ca-certificates-java` and the system bazelrc select the updated
-system Java trust store for both Bazel versions. The default is `bazel9`. Consumers
-calling `bazel8` must update their pipelines and validate their builds with Bazel 9.
+Bazel 8.8.2 (`bazel8`, still the default) includes a fixed Java trust store.
+The retained Bazel 6.5.0 needs a trust-store workaround: `ca-certificates-java`
+supplies updated certificates, and the system bazelrc directs both Bazel JVMs to
+that store. Keep this override while Bazel 6 is bundled.
 NGC CLI's independently bundled trust stores remain a separate follow-up.
 
 ### Updating Containers
@@ -335,11 +335,11 @@ steps:
   - name: Build with Bazel 6
     run: bazel6 build //...
 
-  # Use Bazel 9.3.1 explicitly
-  - name: Build with Bazel 9
-    run: bazel9 build //...
+  # Use Bazel 8.8.2 explicitly
+  - name: Build with Bazel 8
+    run: bazel8 build //...
 
-  # Use default (currently Bazel 9.3.1)
+  # Use default (currently Bazel 8.8.2)
   - name: Build with default Bazel
     run: bazel build //...
 ```

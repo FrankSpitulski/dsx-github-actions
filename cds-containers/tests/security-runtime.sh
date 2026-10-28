@@ -92,8 +92,8 @@ NODE
         check_ca_certificates tools
         bazel --version
         bazel6 --version
-        bazel9 --version
-        test "$(readlink -f "$(command -v bazel)")" = "$(readlink -f "$(command -v bazel9)")"
+        bazel8 --version
+        test "$(readlink -f "$(command -v bazel)")" = "$(readlink -f "$(command -v bazel8)")"
         kubectl version --client
         kubelogin --version
         helm version --short
