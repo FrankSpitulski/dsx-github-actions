@@ -46,6 +46,9 @@ contents with the packaged chart. Verified reuse sets `push-skipped` to `true`.
 
 `retries` is the number of retries after a failed publish (default: `0`).
 Retries wait 5 seconds, then add 5 seconds to the delay for each retry. Setup and packaging run once.
+With `ngc-duplicate: verify`, each failed upload also runs up to six readback checks,
+10 seconds apart, before the publish retry delay starts. These checks can add
+50 seconds per failed upload.
 
 ## Outputs
 
