@@ -218,16 +218,26 @@ class HelmPushTest(unittest.TestCase):
                 self.assert_status(result, "success")
                 self.assert_push_skipped_output(False)
                 self.assertEqual(len(self.command_calls("ngc", "registry", "chart", "push")), 2)
-                self.assertEqual(self.command_calls("sleep"), [["sleep", "10"]] * (5 if policy == "verify" else 0))
+                self.assertEqual(
+                    self.command_calls("sleep"),
+                    [["sleep", "10"]] * (5 if policy == "verify" else 0) + [["sleep", "5"]],
+                )
                 if policy == "verify":
                     self.assertEqual(len(self.command_calls("helm", "repo", "update")), 8)
 
     def test_retry_exhaustion_propagates_failure(self):
         self.env["CC_HELM_NGC_PUSH_STATUS"] = "success"
-        result = self.run_push(retries=2, push=[{"code": 1}])
+        result = self.run_push(
+            policy="skip", retries=3, version_info=[{"code": 1}], push=[{"code": 1}],
+        )
         self.assert_status(result, "failed")
-        self.assertEqual(len(self.command_calls("ngc", "registry", "chart", "push")), 3)
-        self.assertIn("NGC publish failed: reached the configured retry limit (2 retries).", result.stderr)
+        self.assertEqual(len(self.command_calls("ngc", "registry", "chart", "push")), 4)
+        self.assertIn("NGC publish failed: reached the configured retry limit (3 retries).", result.stderr)
+        events = [
+            call[1] if call[0] == "sleep" else "push" for call in self.calls
+            if call[0] == "sleep" or call[:4] == ["ngc", "registry", "chart", "push"]
+        ]
+        self.assertEqual(events, ["push", "5", "push", "10", "push", "15", "push"])
         self.assertEqual(self.command_calls("ngc", "registry", "chart", "remove"), [])
 
     def test_invalid_retries_fail_before_publication(self):

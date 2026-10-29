@@ -45,7 +45,7 @@ for `skip`, `fail`, `overwrite`, and `verify`. The opt-in `verify` policy requir
 contents with the packaged chart. Verified reuse sets `push-skipped` to `true`.
 
 `retries` is the number of retries after a failed publish (default: `0`).
-Setup and packaging run once.
+Retries wait 5 seconds, then add 5 seconds to the delay for each retry. Setup and packaging run once.
 
 ## Outputs
 

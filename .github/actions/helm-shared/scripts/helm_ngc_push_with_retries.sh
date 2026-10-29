@@ -31,6 +31,7 @@ finish() {
 trap 'finish' EXIT
 attempt_env=$(mktemp)
 retry=0
+retry_delay=5
 log_info "Initial NGC publish."
 # GITHUB_ENV is not reloaded within a step. Isolate each attempt's writes,
 # discard intermediate failures, and report only the final outcome.
@@ -54,5 +55,7 @@ while true; do
     exit 1
   fi
   retry=$((retry + 1))
-  log_info "Retrying NGC publish (retry $retry of $retries)."
+  log_info "Retrying NGC publish in ${retry_delay}s (retry $retry of $retries)."
+  sleep "$retry_delay"
+  retry_delay=$((retry_delay + 5))
 done
