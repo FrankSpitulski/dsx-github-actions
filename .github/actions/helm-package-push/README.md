@@ -14,6 +14,7 @@ steps:
       chart-path: ./charts/my-chart
       ngc-key: ${{ secrets.NGC_API_KEY }}
       ngc-path: myorg/myteam
+      retries: 1
 ```
 
 ## Inputs
@@ -31,6 +32,7 @@ steps:
 | `ngc-key` | NGC API Key | No | |
 | `ngc-path` | NGC Org/Team path | No | |
 | `ngc-duplicate` | Action for duplicate versions: `skip`, `overwrite`, `fail`, or `verify` | No | skip |
+| `retries` | Additional publish attempts after failure | No | 0 |
 | `ngc-registry` | NGC Registry URL | No | https://helm.ngc.nvidia.com/ |
 
 Use `lint: true` with `lint-values: '{"endpoint":"https://example.invalid"}'` when chart validation requires configuration.
@@ -41,6 +43,9 @@ See [duplicate version policies](../helm-push-ngc/README.md#duplicate-versions)
 for `skip`, `fail`, `overwrite`, and `verify`. The opt-in `verify` policy requires
 `python3` and reuses an existing version only after comparing its downloaded
 contents with the packaged chart. Verified reuse sets `push-skipped` to `true`.
+
+`retries` is the number of retries after a failed publish (default: `0`).
+Setup and packaging run once.
 
 ## Outputs
 

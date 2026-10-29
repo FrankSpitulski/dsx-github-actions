@@ -124,6 +124,7 @@ class HelmPushTest(unittest.TestCase):
             "CC_HELM_CHART_TGZ": str(self.local),
         }
         self.env.pop("CC_HELM_NGC_PUSH_STATUS", None)
+        self.env.pop("CC_HELM_NGC_RETRIES", None)
 
     def write_chart(self, path, values=b"replicas: 1\n", mtime=1):
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -138,7 +139,7 @@ class HelmPushTest(unittest.TestCase):
                 member.mtime = mtime
                 archive.addfile(member, io.BytesIO(contents))
 
-    def run_push(self, policy="verify", **responses):
+    def run_push(self, policy="verify", retries=None, **responses):
         defaults = {
             "config": [{}], "chart_info": [{}], "version_info": [{}],
             "create": [{}], "remove": [{}], "push": [{}],
@@ -154,10 +155,12 @@ class HelmPushTest(unittest.TestCase):
             self.environment_file.write_text("")
         # The publisher's exit status controls the action step. GITHUB_ENV
         # assignments only reach subsequent steps.
+        env = {**self.env, "CC_HELM_NGC_DUPLICATE": policy}
+        if retries is not None:
+            env["CC_HELM_NGC_RETRIES"] = str(retries)
         result = subprocess.run(
-            ["/bin/bash", "-e", "-c", '"$1" helm_ngc_push',
-             "push-step", str(SCRIPTS / "utils.sh")],
-            env={**self.env, "CC_HELM_NGC_DUPLICATE": policy},
+            [str(SCRIPTS / "utils.sh"), "helm_ngc_push_with_retries"],
+            env=env,
             capture_output=True, text=True, timeout=20,
         )
         state = json.loads(self.state_file.read_text())
@@ -172,12 +175,90 @@ class HelmPushTest(unittest.TestCase):
         self.assertEqual(result.returncode == 0, status != "failed", result.stdout + result.stderr)
         self.assertEqual(self.status, [f"CC_HELM_NGC_PUSH_STATUS={status}"])
 
+    def assert_push_skipped_output(self, expected):
+        action = SCRIPTS.parents[1] / "helm-package-push" / "action.yml"
+        script = subprocess.check_output(
+            ["yq", "-r", '.runs.steps[] | select(.id == "set_outputs") | .run', str(action)],
+            text=True,
+        )
+        output = self.directory / "github-output"
+        output.write_text("")
+        # Execute the action's actual output step with the final GITHUB_ENV.
+        env = {**self.env, **dict(line.split("=", 1) for line in self.status),
+               "GITHUB_OUTPUT": str(output)}
+        subprocess.run(["/bin/bash", "-eu", "-c", script], env=env, check=True)
+        self.assertIn(f"push-skipped={str(expected).lower()}", output.read_text().splitlines())
+
     def command_calls(self, *prefix):
         return [call for call in self.calls if call[:len(prefix)] == list(prefix)]
 
     def assert_no_mutations(self):
         for operation in ("create", "remove", "push"):
             self.assertEqual(self.command_calls("ngc", "registry", "chart", operation), [])
+
+    def test_default_and_zero_do_not_retry_failed_publication(self):
+        for retries in (None, 0):
+            with self.subTest(retries=retries):
+                result = self.run_push(
+                    policy="skip", retries=retries, version_info=[{"code": 1}],
+                    push=[{"code": 1, "stderr": "already exists in the repository\n"}, {}],
+                )
+                self.assert_status(result, "failed")
+                self.assertEqual(len(self.command_calls("ngc", "registry", "chart", "push")), 1)
+                self.assertEqual(self.command_calls("sleep"), [])
+
+    def test_retry_uploads_again_and_stops_after_success(self):
+        self.env["CC_HELM_NGC_PUSH_STATUS"] = "skipped"
+        for policy in ("skip", "verify"):
+            with self.subTest(policy=policy):
+                result = self.run_push(
+                    policy=policy, retries="0002", version_info=[{"code": 1}],
+                    push=[{"code": 1, "stderr": "already exists in the repository\n"}, {}],
+                )
+                self.assert_status(result, "success")
+                self.assert_push_skipped_output(False)
+                self.assertEqual(len(self.command_calls("ngc", "registry", "chart", "push")), 2)
+                self.assertEqual(self.command_calls("sleep"), [["sleep", "10"]] * (5 if policy == "verify" else 0))
+                if policy == "verify":
+                    self.assertEqual(len(self.command_calls("helm", "repo", "update")), 8)
+
+    def test_retry_exhaustion_propagates_failure(self):
+        self.env["CC_HELM_NGC_PUSH_STATUS"] = "success"
+        result = self.run_push(retries=2, push=[{"code": 1}])
+        self.assert_status(result, "failed")
+        self.assertEqual(len(self.command_calls("ngc", "registry", "chart", "push")), 3)
+        self.assertIn("NGC publish failed: reached the configured retry limit (2 retries).", result.stderr)
+        self.assertEqual(self.command_calls("ngc", "registry", "chart", "remove"), [])
+
+    def test_invalid_retries_fail_before_publication(self):
+        for retries in ("", "-1", "+1", "1.5", " 1", "1 ", "1\n", "abc", "1+1", "$(exit 0)"):
+            with self.subTest(retries=retries):
+                result = self.run_push(retries=retries)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("retries must be a nonnegative integer", result.stderr)
+                self.assertEqual(self.calls, [])
+
+    def test_retry_reuses_chart_that_appears_after_failed_attempt(self):
+        result = self.run_push(
+            retries=1, push=[{"code": 1}],
+            search=[search_response([])] * 7 + [search_response(PRESENT)],
+        )
+        self.assert_status(result, "skipped")
+        self.assertEqual(len(self.command_calls("ngc", "registry", "chart", "push")), 1)
+        self.assertEqual(len(self.command_calls("helm", "pull")), 1)
+        self.assertEqual(len(self.command_calls("helm", "repo", "update")), 8)
+        self.assert_push_skipped_output(True)
+
+    def test_retries_preserve_content_checks(self):
+        self.write_chart(self.remote, values=b"replicas: 2\n")
+        for searches, uploads in (([search_response(PRESENT)], 0),
+                                  ([search_response([]), search_response(PRESENT)], 1)):
+            with self.subTest(uploads=uploads):
+                result = self.run_push(retries=1, search=searches, push=[{"code": 1}])
+                self.assert_status(result, "failed")
+                self.assertEqual(len(self.command_calls("ngc", "registry", "chart", "push")), uploads)
+                self.assertEqual(self.command_calls("ngc", "registry", "chart", "remove"), [])
+                self.assertIn("chart contents differ", result.stderr)
 
     def test_existing_legacy_policies_keep_their_declared_behavior(self):
         for policy, status, mutations in (
