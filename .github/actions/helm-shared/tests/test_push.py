@@ -176,18 +176,19 @@ class HelmPushTest(unittest.TestCase):
         self.assertEqual(self.status, [f"CC_HELM_NGC_PUSH_STATUS={status}"])
 
     def assert_push_skipped_output(self, expected):
-        action = SCRIPTS.parents[1] / "helm-package-push" / "action.yml"
-        script = subprocess.check_output(
-            ["yq", "-r", '.runs.steps[] | select(.id == "set_outputs") | .run', str(action)],
-            text=True,
-        )
-        output = self.directory / "github-output"
-        output.write_text("")
-        # Execute the action's actual output step with the final GITHUB_ENV.
-        env = {**self.env, **dict(line.split("=", 1) for line in self.status),
-               "GITHUB_OUTPUT": str(output)}
-        subprocess.run(["/bin/bash", "-eu", "-c", script], env=env, check=True)
-        self.assertIn(f"push-skipped={str(expected).lower()}", output.read_text().splitlines())
+        for action_name in ("helm-package-push", "helm-push-ngc"):
+            action = SCRIPTS.parents[1] / action_name / "action.yml"
+            script = subprocess.check_output(
+                ["yq", "-r", '.runs.steps[] | select(.id == "set_outputs") | .run', str(action)],
+                text=True,
+            )
+            output = self.directory / "github-output"
+            output.write_text("")
+            # Execute the action's actual output step with the final GITHUB_ENV.
+            env = {**self.env, **dict(line.split("=", 1) for line in self.status),
+                   "GITHUB_OUTPUT": str(output)}
+            subprocess.run(["/bin/bash", "-eu", "-c", script], env=env, check=True)
+            self.assertIn(f"push-skipped={str(expected).lower()}", output.read_text().splitlines())
 
     def command_calls(self, *prefix):
         return [call for call in self.calls if call[:len(prefix)] == list(prefix)]

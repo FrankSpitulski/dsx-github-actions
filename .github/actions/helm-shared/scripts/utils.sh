@@ -345,7 +345,7 @@ helm_ngc_push() {
 }
 
 helm_ngc_push_with_retries() {
-  "$(dirname "${BASH_SOURCE[0]}")/helm_ngc_push_with_retries.sh" "$@"
+  "$(dirname "${BASH_SOURCE[0]}")/helm-ngc-push-with-retries.sh" "$@"
 }
 
 helm_check_push_errors() {
