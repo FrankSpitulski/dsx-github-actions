@@ -26,6 +26,7 @@ NAME = r"[a-z0-9]+(?:[._-][a-z0-9]+)*"
 NGC_PATH = r"[a-z0-9][a-z0-9_-]*/[a-z0-9][a-z0-9_-]*"
 STABLE = r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
 RC = rf"{STABLE}-rc\.([1-9][0-9]*)"
+INTENT_PREFIX = "Verified RC promotion intent.\n\n```json\n"
 
 
 class PromotionError(ValueError):
@@ -351,11 +352,10 @@ class GitHub:
     @staticmethod
     def intent(release):
         """Read the final promotion evidence block, with or without leading notes."""
-        prefix = "Verified RC promotion intent.\n\n```json\n"
         body = release.get("body", "")
         # New descriptions lead with release notes; legacy reservations contain
         # only this evidence block. Always parse the final block on retries.
-        _, marker, stored = body.rpartition(prefix)
+        _, marker, stored = body.rpartition(INTENT_PREFIX)
         require(marker and stored.endswith("```\n"),
                 "stable release has no verified promotion intent")
         try:
@@ -430,7 +430,7 @@ class GitHub:
         """Reuse matching evidence or reserve a draft with notes before tagging."""
         existing_tag = self.tag(f"v{stable}")
         release = self.release(stable)
-        body = "Verified RC promotion intent.\n\n```json\n" + canonical(intent).decode() + "```\n"
+        body = INTENT_PREFIX + canonical(intent).decode() + "```\n"
         if release:
             require(release["prerelease"] is False, "stable release is a prerelease")
             require(existing_tag in {None, commit}, "stable tag points to a different commit")
