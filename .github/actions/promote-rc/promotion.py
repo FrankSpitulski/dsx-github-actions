@@ -194,9 +194,11 @@ class GitHub:
         except ValueError:
             raise PromotionError("invalid GitHub response") from None
 
-    def pages(self, path, key=None):
+    def pages(self, path, key=None, *, max_pages=10):
+        """Collect API pages; release history opts out of the metadata page limit."""
         result = []
-        for page in range(1, 11):
+        page = 1
+        while max_pages is None or page <= max_pages:
             join = "&" if "?" in path else "?"
             value = self.request(f"{self.root}/{path}{join}per_page=100&page={page}")
             items = value[key] if key else value
@@ -204,6 +206,7 @@ class GitHub:
             result.extend(items)
             if len(items) < 100:
                 return result
+            page += 1
         raise PromotionError("GitHub pagination limit exceeded")
 
     def tag(self, tag):
@@ -346,6 +349,7 @@ class GitHub:
 
     @staticmethod
     def intent(release):
+        """Read the final promotion evidence block, with or without leading notes."""
         prefix = "Verified RC promotion intent.\n\n```json\n"
         body = release.get("body", "")
         # New descriptions lead with release notes; legacy reservations contain
@@ -361,9 +365,11 @@ class GitHub:
         return result
 
     def release_notes(self, stable, commit):
+        """Generate Conventional Commits notes from the preceding stable ancestor."""
         stable_pattern = r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
         target = tuple(map(int, stable.split(".")))
-        tags = [tag for tag in self.pages("tags") if matches(stable_pattern, tag["name"])]
+        tags = [tag for tag in self.pages("tags", max_pages=None)
+                if matches(stable_pattern, tag["name"])]
         tags.sort(key=lambda tag: tuple(map(int, tag["name"][1:].split("."))), reverse=True)
         previous = None
         for tag in tags:
@@ -375,12 +381,12 @@ class GitHub:
             info = self.request(f"{self.root}/{comparison}?per_page=1")
             if info["status"] in {"ahead", "identical"}:
                 previous = tag["name"]
-                commits = self.pages(comparison, "commits")
+                commits = self.pages(comparison, "commits", max_pages=None)
                 require(len(commits) == info["total_commits"], "incomplete release notes history")
                 break
         else:
             # A first stable release includes all history reachable from its RC.
-            commits = self.pages(f"commits?sha={commit}")
+            commits = self.pages(f"commits?sha={commit}", max_pages=None)
         payload = {
             "repository": self.repository, "version": stable, "previousTag": previous,
             "commit": commit,
@@ -421,6 +427,7 @@ class GitHub:
                      "--repo", self.repository], env=env)
 
     def reserve(self, stable, commit, intent):
+        """Reuse matching evidence or reserve a draft with notes before tagging."""
         existing_tag = self.tag(f"v{stable}")
         release = self.release(stable)
         body = "Verified RC promotion intent.\n\n```json\n" + canonical(intent).decode() + "```\n"

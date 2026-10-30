@@ -440,7 +440,7 @@ class ReleaseNotesTests(unittest.TestCase):
                      ["v1.2.0", "v1.10.0", "v1.11.0-rc.1", "v1", "v1.9.0", "v2.0.0"]]
         self.commits = [{"sha": COMMIT, "commit": {"message": "feat: full stable range"}}]
         self.github.request = Mock(return_value={"status": "ahead", "total_commits": 1})
-        self.github.pages = Mock(side_effect=lambda path, key=None:
+        self.github.pages = Mock(side_effect=lambda path, key=None, **kwargs:
                                  self.tags if path == "tags" else self.commits)
 
     def generate(self):
@@ -455,13 +455,13 @@ class ReleaseNotesTests(unittest.TestCase):
         self.assertEqual(self.payload["commit"], COMMIT)
         self.assertEqual(self.payload["commits"],
                          [{"hash": COMMIT, "message": "feat: full stable range"}])
-        self.github.pages.assert_any_call(f"compare/{self.base}...{COMMIT}", "commits")
+        self.github.pages.assert_any_call(f"compare/{self.base}...{COMMIT}", "commits", max_pages=None)
 
     def test_first_release_uses_reachable_history(self):
         self.tags.clear()
         self.generate()
         self.assertIsNone(self.payload["previousTag"])
-        self.github.pages.assert_any_call(f"commits?sha={COMMIT}")
+        self.github.pages.assert_any_call(f"commits?sha={COMMIT}", max_pages=None)
 
     def test_skips_stable_tags_outside_rc_ancestry(self):
         self.github.request.side_effect = [
@@ -488,6 +488,55 @@ class ReleaseNotesTests(unittest.TestCase):
         self.generate()
         self.assertEqual(len(self.payload["commits"]), 101)
         self.assertTrue(self.github.request.call_args.args[0].endswith("per_page=100&page=2"))
+
+    def test_comparison_history_at_and_beyond_ten_full_pages(self):
+        for count in (1000, 1001):
+            with self.subTest(commits=count):
+                self.github.pages = p.GitHub.pages.__get__(self.github)
+                self.github.request.side_effect = [
+                    [{"name": "v1.10.0", "commit": {"sha": self.base}}],
+                    {"status": "ahead", "total_commits": count},
+                    *[{"commits": self.commits * 100} for _ in range(10)],
+                    {"commits": self.commits * (count - 1000)},
+                ]
+                self.generate()
+                self.assertEqual(len(self.payload["commits"]), count)
+                self.assertTrue(self.github.request.call_args.args[0].endswith("page=11"))
+
+    def test_first_release_history_at_and_beyond_ten_full_pages(self):
+        for count in (1000, 1001):
+            with self.subTest(commits=count):
+                self.github.pages = p.GitHub.pages.__get__(self.github)
+                self.github.request.side_effect = [
+                    [], *[self.commits * 100 for _ in range(10)],
+                    self.commits * (count - 1000),
+                ]
+                self.generate()
+                self.assertIsNone(self.payload["previousTag"])
+                self.assertEqual(len(self.payload["commits"]), count)
+                self.assertTrue(self.github.request.call_args.args[0].endswith("page=11"))
+
+    def test_tag_history_at_and_beyond_ten_full_pages(self):
+        stable = {"name": "v1.10.0", "commit": {"sha": self.base}}
+        for count in (1000, 1001):
+            with self.subTest(tags=count):
+                tags = [{"name": f"v1.11.0-rc.{index}"} for index in range(count - 1)] + [stable]
+                self.github.pages = p.GitHub.pages.__get__(self.github)
+                self.github.request.side_effect = [
+                    *[tags[index:index + 100] for index in range(0, 1001, 100)],
+                    {"status": "ahead", "total_commits": 1}, {"commits": self.commits},
+                ]
+                self.generate()
+                self.assertEqual(self.payload["previousTag"], "v1.10.0")
+                self.github.request.assert_any_call("repos/example/product/tags?per_page=100&page=11")
+
+    def test_nonhistory_metadata_retains_its_page_limit(self):
+        self.github.pages = p.GitHub.pages.__get__(self.github)
+        self.github.request.side_effect = None
+        self.github.request.return_value = [{}] * 100
+        with self.assertRaisesRegex(p.PromotionError, "pagination limit exceeded"):
+            self.github.pages("releases")
+        self.assertEqual(self.github.request.call_count, 10)
 
 
 if __name__ == "__main__":
