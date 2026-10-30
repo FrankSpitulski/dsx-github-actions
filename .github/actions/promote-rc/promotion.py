@@ -24,7 +24,8 @@ SHA = r"[0-9a-f]{40}"
 DIGEST = r"sha256:[0-9a-f]{64}"
 NAME = r"[a-z0-9]+(?:[._-][a-z0-9]+)*"
 NGC_PATH = r"[a-z0-9][a-z0-9_-]*/[a-z0-9][a-z0-9_-]*"
-RC = r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-rc\.([1-9][0-9]*)"
+STABLE = r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
+RC = rf"{STABLE}-rc\.([1-9][0-9]*)"
 
 
 class PromotionError(ValueError):
@@ -366,10 +367,9 @@ class GitHub:
 
     def release_notes(self, stable, commit):
         """Generate Conventional Commits notes from the preceding stable ancestor."""
-        stable_pattern = r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
         target = tuple(map(int, stable.split(".")))
         tags = [tag for tag in self.pages("tags", max_pages=None)
-                if matches(stable_pattern, tag["name"])]
+                if matches(f"v{STABLE}", tag["name"])]
         tags.sort(key=lambda tag: tuple(map(int, tag["name"][1:].split("."))), reverse=True)
         previous = None
         for tag in tags:

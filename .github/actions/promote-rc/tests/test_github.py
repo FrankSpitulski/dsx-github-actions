@@ -437,7 +437,8 @@ class ReleaseNotesTests(unittest.TestCase):
         self.github = p.GitHub("example/product")
         self.base = "b" * 40
         self.tags = [{"name": name, "commit": {"sha": self.base}} for name in
-                     ["v1.2.0", "v1.10.0", "v1.11.0-rc.1", "v1", "v1.9.0", "v2.0.0"]]
+                     ["v1.2.0", "v1.10.0", "v1.11.0-rc.1", "v1", "v1.9.0", "v2.0.0",
+                      "v01.10.1", "v1.010.1", "v1.10.01", "v1.10.1+build", "1.10.1", "v1.10.1\n"]]
         self.commits = [{"sha": COMMIT, "commit": {"message": "feat: full stable range"}}]
         self.github.request = Mock(return_value={"status": "ahead", "total_commits": 1})
         self.github.pages = Mock(side_effect=lambda path, key=None, **kwargs:
